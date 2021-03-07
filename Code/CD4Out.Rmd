@@ -1,0 +1,73 @@
+---
+title: "B16-IL33 SCRNA-Seq CD4 output"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+---
+
+```{r}
+knitr::opts_chunk$set(fig.path = "Graphs/CD4/")
+knitr::opts_chunk$set(eval = TRUE)
+knitr::opts_chunk$set(dev = c("pdf", "png"))
+
+```
+
+
+```{r}
+# Packages
+library(plyr)
+library(dplyr)
+library(Seurat)
+library(patchwork)
+library(readxl)
+library(sctransform)
+
+#Load Data
+load("Data/Cells/CD4/tc.cd4.Robj")
+
+```
+
+```{r}
+DimPlot(tc.cd4, reduction = "umap")
+
+```
+
+```{r fig.width=10, fig.height=4}
+DimPlot(tc.cd4, reduction = "umap", split.by="tumor")
+
+```
+
+```{r}
+DefaultAssay(tc.cd4) <- "RNA"
+
+write.csv(Cells(tc.cd4), file = "Data/Cells/CD4/cd4.cellID_obs.csv")
+write.table(GetAssayData(tc.cd4, slot="data"), file = "Data/Cells/CD4/cd4.matrix_processed_full.csv")
+write.table(GetAssayData(tc.cd4, slot="scale.data"), file = "Data/Cells/CD4/cd4.matrix_scaled_full.csv")
+write.table(GetAssayData(subset(tc.cd4, features=VariableFeatures(tc.cd4)), slot="data"), file = "Data/Cells/CD4/cd4.matrix_processed.csv")
+write.table(GetAssayData(subset(tc.cd4, features=VariableFeatures(tc.cd4)), slot="scale.data"), file = "Data/Cells/CD4/cd4.matrix_scaled.csv")
+write.table(as.matrix(tc.cd4[["RNA"]]@counts), file = "Data/Cells/CD4/cd4.matrix.csv")
+write.csv(tc.cd4$tumor, file = "Data/Cells/CD4/cd4.tumor.csv")
+write.csv(Embeddings(tc.cd4, reduction = "umap"), file = "Data/Cells/CD4/cd4.cell_embeddings_umap.csv")
+write.csv(Embeddings(tc.cd4, reduction = "phate"), file = "Data/Cells/CD4/cd4.cell_embeddings_phate.csv")
+write.csv(tc.cd4$cd4type, file = "Data/Cells/CD4/cd4.clusters.csv")
+
+```
+
+```{r}
+DefaultAssay(tc.cd4) <- "RNA"
+
+# Convert to loom
+for(j in 1:ncol(tc.cd4@meta.data)){
+if(is.factor(tc.cd4@meta.data[,j]) == T){
+tc.cd4@meta.data[,j] = as.character(tc.cd4@meta.data[,j]) # Force the variable type to be character
+tc.cd4@meta.data[,j][is.na(tc.cd4@meta.data[,j])] <- "None"
+}
+if(is.character(tc.cd4@meta.data[,j]) == T){
+tc.cd4@meta.data[,j][is.na(tc.cd4@meta.data[,j])] <- "None"
+}
+}
+
+as.loom(tc.cd4, filename = "Data/Cells/CD4/tc.cd4.loom", verbose = FALSE)
+
+```

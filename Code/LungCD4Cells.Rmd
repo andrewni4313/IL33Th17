@@ -1,0 +1,331 @@
+---
+title: "IL33 CD4 cells Lung SCRNA-Seq Analysis"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+---
+
+```{r}
+knitr::opts_chunk$set(fig.path = "Graphs/Lung CD4/")
+knitr::opts_chunk$set(eval = TRUE)
+knitr::opts_chunk$set(dev = c("pdf", "png"))
+
+```
+
+```{r}
+# Packages
+library(dplyr)
+library(plyr)
+library(Seurat)
+library(patchwork)
+library(readxl)
+
+# Load Data
+allcount<- read.table(file = 'Data/Lung/GSE129914_Rsem_counts.txt', sep = '\t', check.names = FALSE, header = T)
+metadata <- read.table(file = 'Data/Lung/Cell_meta_table.txt', sep = '\t', header = T, check.names = FALSE)
+
+allcountcd4<- allcount[,grepl('CD4_Lung',colnames(allcount))]
+allcountLN<-allcount[,grepl('CD4_LN',colnames(allcount))]
+
+tc.cd4.lung <- CreateSeuratObject(counts = allcountcd4, project = "cd4only", min.cells = 3, min.features = 200, meta.data=metadata)
+
+tc.cd4.lung <- SetIdent(object = tc.cd4.lung, value = 'Cell')
+tc.cd4.lung <- subset(tc.cd4.lung, subset = cell.id.assigned == "Tconv")
+
+immune_genes <- read_excel("Data/ImmuneGenes.xlsx")
+immune_genes <- immune_genes[['A2M']]
+
+# Convert Strings
+capitalize <- function(x) {
+  x <- tolower(x)
+  substr(x, 1, 1) <- toupper(substr(x, 1, 1))
+  x
+}
+
+immune_genes <- capitalize(immune_genes)
+immune_genes <- unique(immune_genes)
+
+# Metadata
+
+rm(allcount, allcountcd4, allcountLN, metadata)
+
+```
+
+```{r}
+#Preprocessing
+tc.cd4.lung[["percent.mt"]] <- PercentageFeatureSet(tc.cd4.lung, pattern = "^MT-")
+
+# Visualize QC metrics as a violin plot
+VlnPlot(tc.cd4.lung, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+
+# FeatureScatter is typically used to visualize feature-feature relationships, but can be used
+# for anything calculated by the object, i.e. columns in object metadata, PC scores etc.
+
+plot1 <- FeatureScatter(tc.cd4.lung, feature1 = "nCount_RNA", feature2 = "percent.mt")
+plot2 <- FeatureScatter(tc.cd4.lung, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+plot1 + plot2
+
+tc.cd4.lung <- subset(tc.cd4.lung, subset = nFeature_RNA > 100 & nFeature_RNA < 3500 & percent.mt < 5)
+
+rm(plot1, plot2)
+
+```
+
+```{r}
+#Normalizing
+tc.cd4.lung <- NormalizeData(tc.cd4.lung, normalization.method = "LogNormalize", scale.factor = 10000)
+
+```
+
+```{r}
+#Feature Selection
+tc.cd4.lung <- FindVariableFeatures(tc.cd4.lung, selection.method = "vst", nfeatures = 2000)
+
+# Identify the 10 most highly variable genes
+top10 <- head(VariableFeatures(tc.cd4.lung), 10)
+
+# plot variable features with and without labels
+plot1 <- VariableFeaturePlot(tc.cd4.lung)
+plot2 <- LabelPoints(plot = plot1, points = top10, repel = TRUE)
+plot1 + plot2
+rm(plot1, plot2, top10)
+
+```
+
+```{r}
+#Scale Data
+all.genes <- rownames(tc.cd4.lung)
+tc.cd4.lung <- ScaleData(tc.cd4.lung, features = all.genes)
+
+rm(all.genes) #cleanup
+
+```
+
+```{r}
+#Linear Dimensional Reduction
+tc.cd4.lung <- RunPCA(tc.cd4.lung, features = VariableFeatures(object = tc.cd4.lung))
+print(tc.cd4.lung[["pca"]], dims = 1:5, nfeatures = 5)
+VizDimLoadings(tc.cd4.lung, dims = 1:2, reduction = "pca")
+DimPlot(tc.cd4.lung, reduction = "pca")
+DimHeatmap(tc.cd4.lung, dims = 1, cells = 500, balanced = TRUE)
+DimHeatmap(tc.cd4.lung, dims = 1:15, cells = 500, balanced = TRUE)
+
+```
+
+
+```{r}
+#Determine dimensionality
+tc.cd4.lung <- JackStraw(tc.cd4.lung, num.replicate = 100)
+tc.cd4.lung <- ScoreJackStraw(tc.cd4.lung, dims = 1:20)
+JackStrawPlot(tc.cd4.lung, dims = 1:15)
+ElbowPlot(tc.cd4.lung)
+
+```
+
+```{r}
+# Dimension reduction UMAP
+tc.cd4.lung <- RunUMAP(tc.cd4.lung, dims = 1:50, umap.method = "umap-learn")
+DimPlot(tc.cd4.lung, reduction = "umap", label=TRUE)
+
+```
+
+
+```{r}
+# Cluster cells
+tc.cd4.lung <- FindNeighbors(tc.cd4.lung, dims = 1:50)
+tc.cd4.lung <- FindClusters(tc.cd4.lung, resolution = 1.1)
+head(Idents(tc.cd4.lung), 5)
+
+```
+
+```{r}
+# Change the information of cells containing global-cluster information
+# tc.cd4.lung$seurat_clusters <- factor(tc.cd4.lung$seurat_clusters, levels = c(levels(tc.cd4.lung$seurat_clusters), "5"))
+# tc.cd4.lung$seurat_clusters[Cells(subset(tc.cd4.lung, subset = global_clusters == "5"))] <- tc.cd4.lung$global_clusters[Cells(subset(tc.cd4.lung, subset = global_clusters == "5"))]
+# Idents(tc.cd4.lung) <- tc.cd4.lung$seurat_clusters
+
+```
+
+```{r}
+# Dimension reduction UMAP
+tc.cd4.lung@reductions[["umap"]] <- NULL
+
+tc.cd4.lung <- RunUMAP(tc.cd4.lung, dims = 1:50, umap.method = "umap-learn", reduction.name = "umap")
+
+DimPlot(tc.cd4.lung, reduction = "umap", label=TRUE)
+
+```
+
+```{r}
+# Cell Types
+VlnPlot(tc.cd4.lung, features = c("Cd4"), slot = "counts", log = TRUE, sort = FALSE)
+VlnPlot(tc.cd4.lung, features = c("Cd8a"), slot = "counts", log = TRUE, sort = FALSE)
+VlnPlot(tc.cd4.lung, features = c("Foxp3"), slot = "counts", log = TRUE, sort = FALSE)
+VlnPlot(tc.cd4.lung, features = c("Il2ra"), slot = "counts", log = TRUE, sort = FALSE)
+
+```
+
+```{r}
+# find markers for every cluster compared to all remaining cells, report only the positive ones
+tc.cd4.lung.markers <- FindAllMarkers(tc.cd4.lung, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
+tc.cd4.lung.markers %>% group_by(cluster) %>% top_n(n = 2, wt = avg_logFC)
+
+top3 <- tc.cd4.lung.markers %>% group_by(cluster) %>% top_n(n = 3, wt = avg_logFC)
+DoHeatmap(tc.cd4.lung, features = top3$gene) + NoLegend()
+
+top1 <- tc.cd4.lung.markers %>% group_by(cluster) %>% top_n(n = 1, wt = avg_logFC)
+DoHeatmap(tc.cd4.lung, features = top1$gene) + NoLegend()
+
+```
+
+```{r}
+# Assign cell type to clusters
+new.cluster.ids <- c(0, 1, 2, 3, 4, 5)
+new.cluster.ids <- c("CD4-Bhlhe40", "CD4-Ccl5", "CD4-Xist", "CD4-Igfbp4", "CD4-Gbp2", "CD4-Cd163l1")
+
+names(new.cluster.ids) <- levels(tc.cd4.lung)
+tc.cd4.lung <- RenameIdents(tc.cd4.lung, new.cluster.ids)
+
+tc.cd4.lung$cellTypeGene <- Idents(tc.cd4.lung)
+
+Idents(tc.cd4.lung) <- tc.cd4.lung$cellTypeGene
+
+# new.cluster.ids <- c("Th1", "THea", "THnaive", "THex", "Th17", "Th..?")
+# 
+# names(new.cluster.ids) <- levels(tc.cd4.lung)
+# tc.cd4.lung <- RenameIdents(tc.cd4.lung, new.cluster.ids)
+# 
+# tc.cd4.lung$cellTypeGene <- Idents(tc.cd4.lung)
+# 
+# Idents(tc.cd4.lung) <- tc.cd4.lung$cellTypeGene
+
+tc.cd4.lung$sorted_type = as.factor(paste(tc.cd4.lung$cellTypeGene, "_", tc.cd4.lung$cell.id.sorted))
+
+tc.cd4.lung$assigned_type = as.factor(paste(tc.cd4.lung$cellTypeGene, "_", tc.cd4.lung$cell.id.assigned))
+
+rm(new.cluster.ids) # Cleanup
+
+```
+
+```{r}
+# Cell Types
+VlnPlot(tc.cd4.lung, features = c("Cd4"), slot = "counts", log = TRUE, sort = FALSE)
+VlnPlot(tc.cd4.lung, features = c("Cd8a"), slot = "counts", log = TRUE, sort = FALSE)
+VlnPlot(tc.cd4.lung, features = c("Foxp3"), slot = "counts", log = TRUE, sort = FALSE)
+VlnPlot(tc.cd4.lung, features = c("Il2ra"), slot = "counts", log = TRUE, sort = FALSE)
+
+```
+```{r}
+# Cell Types
+VlnPlot(tc.cd4.lung, features = c("Cd4"), log = TRUE, sort = FALSE)
+VlnPlot(tc.cd4.lung, features = c("Cd8a"), log = TRUE, sort = FALSE)
+VlnPlot(tc.cd4.lung, features = c("Foxp3"), log = TRUE, sort = FALSE)
+VlnPlot(tc.cd4.lung, features = c("Il2ra"), log = TRUE, sort = FALSE)
+
+```
+
+```{r}
+# Dimension reduction UMAP
+DimPlot(tc.cd4.lung, reduction = "umap", label=TRUE) & NoAxes()
+
+```
+
+```{r}
+# Type
+DimPlot(tc.cd4.lung, reduction = "umap", group.by = "cell.id.assigned")
+DimPlot(tc.cd4.lung, reduction = "umap", group.by = "cell.id.sorted")
+DimPlot(tc.cd4.lung, reduction = "umap", group.by = "tissue")
+DimPlot(tc.cd4.lung, reduction = "umap", group.by = "mouse")
+DimPlot(tc.cd4.lung, reduction = "umap", group.by = "tmp")
+
+```
+```{r}
+# Averages
+cluster.averages <- AverageExpression(subset(tc.cd4.lung, features = immune_genes))
+cluster.averages <- as.matrix.data.frame(cluster.averages[["RNA"]])
+cluster.averages <- t(scale(t(cluster.averages)))
+cluster.averages <- cluster.averages[complete.cases(cluster.averages),]
+
+```
+
+```{r}
+# Heatmap
+library(RColorBrewer)
+library(knitr)
+library(scales)
+library(pheatmap)
+library(ggplot2)
+
+colors <- hue_pal()(length(levels(tc.cd4.lung@meta.data[["cellTypeGene"]])))
+names(colors) <- levels(tc.cd4.lung@meta.data[["cellTypeGene"]])
+
+annotations <- data.frame(Cluster = colnames(cluster.averages))
+rownames(annotations) <- colnames(cluster.averages)
+
+mat_colors <- as.list(colors)
+
+heatmap <- pheatmap(cluster.averages,
+         cellwidth = 30, cellheight = 30,
+         annotation_colors = mat_colors,
+         annotation_col = annotations,
+         border=NA, display_numbers = F,
+         filename="Graphs/Lung CD4/heatmap.pdf")
+
+genes_hierarchial <- heatmap[["tree_row"]][["labels"]][heatmap[["tree_row"]][["order"]]]
+order_hierarchial <- heatmap[["tree_col"]][["labels"]][heatmap[["tree_col"]][["order"]]]
+Idents(tc.cd4.lung) <- factor(Idents(tc.cd4.lung), levels=order_hierarchial)
+  
+plot <- DotPlot(tc.cd4.lung, features = genes_hierarchial, cols = "RdYlBu") + coord_flip() + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+ggplot2::ggsave(filename = "Graphs/Lung CD4/dotplot.pdf", plot = plot, width = length(order_hierarchial), height = length(genes_hierarchial)/4, limitsize = FALSE)
+
+rm(plot, heatmap)
+
+```
+
+```{r}
+# Package
+library(slingshot)
+library(scales)
+
+# Load Data
+sds <- slingshot(Embeddings(tc.cd4.lung, "umap"), clusterLabels = tc.cd4.lung$seurat_clusters, 
+                 start.clus = 4, stretch = 0)
+
+```
+
+```{r}
+# Assign a color to each cell based on some value
+cell_pal <- function(cell_vars, pal_fun,...) {
+  if (is.numeric(cell_vars)) {
+    pal <- pal_fun(100, ...)
+    return(pal[cut(cell_vars, breaks = 100)])
+  } else {
+    categories <- sort(unique(cell_vars))
+    pal <- setNames(pal_fun(length(categories), ...), categories)
+    return(pal[cell_vars])
+  }
+}
+
+cell_colors_clust <- cell_pal(tc.cd4.lung$cellTypeGene, hue_pal())
+
+```
+
+```{r}
+# Inferred Trajectory - Slingshot
+plot(reducedDim(sds), col = cell_colors_clust, pch = 20, cex = 0.5)
+lines(sds, lwd = 2, type = 'lineages', col = 'black')
+
+plot(reducedDim(sds), col = cell_colors_clust, pch = 20, cex = 0.5)
+lines(sds, lwd = 2, col = 'black')
+
+```
+
+```{r}
+save(tc.cd4.lung,file="Data/Cells/Lung CD4/tc.cd4.lung.Robj")
+
+```
+
+
+
+

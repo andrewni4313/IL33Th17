@@ -1,0 +1,666 @@
+---
+title: "All Visualization"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+---
+
+```{r}
+knitr::opts_chunk$set(fig.path = "Graphs/Visualizations/All/")
+knitr::opts_chunk$set(eval = TRUE)
+knitr::opts_chunk$set(dev = c("pdf", "png"))
+
+```
+
+```{r}
+# Packages
+library(dplyr)
+library(Seurat)
+library(patchwork)
+library(readxl)
+
+#Load Data
+load("Data/Cells/tc.Robj")
+cd4 <- read.csv(file = "Data/Cells/CD4/cd4.clusters.csv")
+cd8 <- read.csv(file = "Data/Cells/CD8/cd8.clusters.csv")
+treg <- read.csv(file = "Data/Cells/Treg/treg.clusters.csv")
+
+anno <- rbind(cd4, cd8, treg)
+sub <- as.character(anno$x)
+names(sub) <- anno$X
+
+tc <- AddMetaData(tc, sub, "subclusters")
+Idents(tc) <- tc$subclusters
+
+```
+
+```{r}
+mean(Matrix::colSums(tc@assays[["RNA"]]@counts))
+
+```
+
+```{r}
+levels(tc) <- c("CD8-C1-Ccl4", "CD8-C2-Id3", "CD8-C3-Dusp1", "CD8-C4-Gzmc", "CD8-C5-Gzma", "CD8-C6-Ccr7",
+                "Th1", "ThEa", "ThNaive", "ThEx", "Th17", "ThCyto",
+          "Treg-C1-Glrx", "Treg-C2-Il1rl1", "Treg-C3-Lag3", "Treg-C4-Nhp2", "Treg-C5-Stmn1", "Treg-C6-Isg15"
+          )
+
+# Assign cell type to clusters
+new.cluster.ids <- c(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17)
+new.cluster.ids <- c("CD8-C1-Ccl4", "CD8-C2-Id3", "CD8-C3-Dusp1", "CD8-C4-Gzmc", "CD8-C5-Gzma", "CD8-C6-Ccr7",
+                "CD4-C1-Ccl5", "CD4-C1-Hspa1a", "CD4-C1-Igfbp4", "CD4-C1-Ramp3", "CD4-C1-Il17a", "CD4-C1-Ahnak",
+          "Treg-C1-Glrx", "Treg-C2-Il1rl1", "Treg-C3-Lag3", "Treg-C4-Nhp2", "Treg-C5-Stmn1", "Treg-C6-Isg15")
+
+names(new.cluster.ids) <- levels(tc)
+tc <- RenameIdents(tc, new.cluster.ids)
+
+tc$clusternum <- Idents(tc)
+
+Idents(tc) <- tc$subclusters
+
+levels(tc) <- c("CD8-C1-Ccl4", "CD8-C2-Id3", "CD8-C3-Dusp1", "CD8-C4-Gzmc", "CD8-C5-Gzma", "CD8-C6-Ccr7",
+                "Th1", "ThEa", "ThNaive", "ThEx", "Th17", "ThCyto",
+          "Treg-C1-Glrx", "Treg-C2-Il1rl1", "Treg-C3-Lag3", "Treg-C4-Nhp2", "Treg-C5-Stmn1", "Treg-C6-Isg15"
+          )
+
+```
+
+```{r fig.height=7, fig.width=11}
+DimPlot(tc, reduction = "umap", label=TRUE, group.by="clusternum", pt.size = 1) & NoAxes()
+DimPlot(tc, reduction = "umap", label=TRUE, pt.size = 0.5) & NoAxes()
+
+```
+```{r}
+#tc <- RenameIdents(tc, "Th1"="CD4-C1-Ccl5", "ThEa"="CD4-C2-Hspa1a", "ThNaive"="CD4-C3-Igfbp4", "ThEx"="CD4-C4-Ramp3", "Th17"="CD4-C5-Il17a", "ThCyto"="CD4-C6-Ahnak")
+
+```
+
+```{r fig.height=7, fig.width=10}
+# Dimension reduction UMAP
+FeaturePlot(tc, reduction = "umap", features = "clonosize", pt.size = 1) & NoAxes()
+DimPlot(tc, reduction = "umap", label=TRUE, group.by = "cellType", pt.size = 1) & NoAxes()
+DimPlot(tc, reduction = "umap", group.by = "tumor") & NoAxes()
+FeaturePlot(tc, reduction = "umap", features = "Cd4") & NoAxes()
+FeaturePlot(tc, reduction = "umap", features = "Cd8a") & NoAxes()
+FeaturePlot(tc, reduction = "umap", features = "Foxp3") & NoAxes()
+
+```
+
+```{r fig.height=5, fig.width = 13}
+DimPlot(tc, reduction = "umap", split.by = "tumor", pt.size = 1) & NoAxes()
+
+```
+```{r fig.height=5, fig.width = 12}
+FeaturePlot(tc, reduction = "umap", features = "clonosize", split.by = "tumor") & NoAxes()
+
+```
+
+```{r fig.height=12, fig.width=20}
+# logfc > 0.5 and p <0.05
+
+tc.markers <- FindAllMarkers(tc, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.5)
+
+tc.markers %>% group_by(cluster) %>% top_n(n = 2, wt = avg_logFC)
+
+top3 <- tc.markers %>% group_by(cluster) %>% top_n(n = 3, wt = avg_logFC)
+DoHeatmap(tc, features = top3$gene) + NoLegend()
+DotPlot(tc, features = unique(top3$gene)) + NoLegend() + RotatedAxis()
+
+top1 <- tc.markers %>% group_by(cluster) %>% top_n(n = 1, wt = avg_logFC)
+DoHeatmap(tc, features = top1$gene) + NoLegend()
+DotPlot(tc, features = unique(top1$gene)) + NoLegend() + RotatedAxis()
+
+rm(top1, top3)
+
+```
+
+
+```{r fig.height=7, fig.width=11}
+# Cell Types
+VlnPlot(tc, features = c("Cd4"), slot = "counts", log = TRUE, sort = FALSE, pt.size=0)
+VlnPlot(tc, features = c("Cd8a"), slot = "counts", log = TRUE, sort = FALSE, pt.size=0)
+VlnPlot(tc, features = c("Foxp3"), slot = "counts", log = TRUE, sort = FALSE, pt.size=0)
+VlnPlot(tc, features = c("Il2ra"), slot = "counts", log = TRUE, sort = FALSE, pt.size=0)
+
+```
+
+```{r}
+# Visualize PCA
+DimPlot(tc, reduction = "pca") & NoAxes()
+
+```
+```{r fig.height=5, fig.width=5}
+DimPlot(tc, reduction = "pca", group.by = "cellType") & NoAxes()
+
+```
+
+```{r fig.height=6, fig.width=7}
+DimHeatmap(tc, dims = 1:9, nfeatures=10, cells = 250, balanced = TRUE)
+
+```
+
+```{r fig.height=6, fig.width=8}
+LabelPoints(plot = VariableFeaturePlot(tc, pt.size=1), points = head(VariableFeatures(tc), 10), repel = TRUE)
+
+```
+```{r}
+ElbowPlot(tc, ndims=50)
+
+```
+
+```{r}
+library(ggplot2)
+# Clonotype visualization
+
+data_dir <- 'Data/filtered_feature_bc_matrix_1'
+
+tcr <- read.csv(paste(data_dir, "filtered_contig_annotations.csv", sep="/"))
+tcr <- tcr[tcr$productive=='True', ]
+tcr <- tcr[!tcr$raw_consensus_id=='None', ]
+
+tcr <- tcr[!duplicated(tcr$barcode), ]
+tcr <- tcr[,c("barcode", "raw_clonotype_id")]
+names(tcr)[names(tcr) == "raw_clonotype_id"] <- "clonotype_id"
+tcr <- filter(tcr, barcode %in% Cells(tc))
+
+clonosize <- tcr %>% group_by(tcr["clonotype_id"]) %>% summarise(Frequency = n())
+clonosize <- clonosize[!clonosize$clonotype_id=="None",]  # Remove NA
+
+clones <- clonosize[clonosize$Frequency>2,]
+clones <- clones[order(-clones$Frequency),]
+
+rm(tcr, clonosize)
+
+
+for (clone in clones$clonotype_id){
+  print(DimPlot(tc, reduction = "umap", cells.highlight=WhichCells(tc, expression = clonotype_id == clone)) + ggtitle(clone) & NoAxes() )
+}
+
+```
+```{r fig.height=7, fig.width=11}
+# Cell Types
+VlnPlot(tc, features = c("Ccr7"), slot = "counts", log = TRUE, sort = FALSE, pt.size=0)
+VlnPlot(tc, features = c("Sell"), slot = "counts", log = TRUE, sort = FALSE, pt.size=0)
+
+```
+
+```{r fig.height=12, fig.width=20}
+# logfc > 0.5 and p <0.05
+
+tc.markers <- FindAllMarkers(tc, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.5)
+
+tc.markers %>% group_by(cluster) %>% top_n(n = 2, wt = avg_logFC)
+
+top10 <- tc.markers %>% group_by(cluster) %>% top_n(n = 10, wt = avg_logFC)
+DoHeatmap(tc, features = top10$gene) + NoLegend()
+DotPlot(tc, features = unique(top10$gene)) + NoLegend() + RotatedAxis()
+
+rm(top10)
+
+```
+
+
+
+
+```{r}
+# Packages
+library(ggplot2)
+library(waffle)
+library(gridExtra)
+
+clonosize_graphs <- function(group, no_tumor=FALSE, avg_clonosize=FALSE, size="clonosize") {
+  if(size=="clonosize"){
+    # Clusters
+    cluster_distribution <- as.data.frame(table(tc@meta.data[[group]]))
+    cluster_distribution$Label <- sprintf("%s (%s)", cluster_distribution$Var1, scales::percent(round(cluster_distribution$Freq/sum(cluster_distribution$Freq), 2)))
+    names(cluster_distribution)[names(cluster_distribution) == "Var1"] <- "cluster"
+    
+    order <- cluster_distribution$cluster
+    cluster_distribution$Label = factor(cluster_distribution$Label, levels = cluster_distribution$Label)
+    # Basic piechart
+    print(ggplot(cluster_distribution, aes(x="", y=Freq, fill=Label)) +
+      ggtitle("All Cells Cluster Distribution") +
+      geom_bar(stat="identity", width=1) +
+      coord_polar("y", start=0) +
+      theme_void())
+    
+    temp <- as.data.frame.matrix(table(tc@meta.data[[group]], tc$tumor))
+    names(temp)[names(temp) == "Var1"] <- "cluster"
+    names(temp)[names(temp) == "b16"] <- "B16T"
+    names(temp)[names(temp) == "b16il33"] <- "B16T_IL33"
+    
+    temp$cluster <- cluster_distribution$cluster
+    
+    cluster_distribution <- merge(cluster_distribution, temp, by = "cluster")
+    
+    cluster_distribution$Label_B16T <- sprintf("%s (%s)", cluster_distribution$cluster, scales::percent(round(cluster_distribution$B16T/sum(cluster_distribution$B16T), 2)))
+    
+    cluster_distribution$Label_B16T_IL33 <- sprintf("%s (%s)", cluster_distribution$cluster, scales::percent(round(cluster_distribution$B16T_IL33/sum(cluster_distribution$B16T_IL33), 2)))
+  
+    if (!no_tumor) {
+      cluster_distribution = cluster_distribution[match(order, cluster_distribution$cluster),]
+      cluster_distribution$Label_B16T = factor(cluster_distribution$Label_B16T, levels = cluster_distribution$Label_B16T)
+      #b16
+      print(ggplot(cluster_distribution, aes(x="", y=B16T, fill=Label_B16T)) +
+        ggtitle("b16 Cells Cluster Distribution") +
+        geom_bar(stat="identity", width=1) +
+        coord_polar("y", start=0) +
+        theme_void())
+      
+      cluster_distribution$Label_B16T_IL33 = factor(cluster_distribution$Label_B16T_IL33, levels = cluster_distribution$Label_B16T_IL33)
+      
+      #b16 IL33
+      print(ggplot(cluster_distribution, aes(x="", y=B16T_IL33, fill=Label_B16T_IL33)) +
+        ggtitle("b16 IL33 Cells Cluster Distribution") +
+        geom_bar(stat="identity", width=1) +
+        coord_polar("y", start=0) +
+        theme_void())
+      
+    }
+  
+    rm(temp)
+    
+    # Tumor
+    tumor_distribution <- as.data.frame(table(tc$tumor, tc@meta.data[[group]]))
+    names(tumor_distribution)[names(tumor_distribution) == "Var1"] <- "tumor"
+    names(tumor_distribution)[names(tumor_distribution) == "Var2"] <- "cluster"
+    
+    print(chisq.test(table(tc$tumor, tc@meta.data[[group]])))
+    
+    if (no_tumor) {fill_color="Cells"} else {fill_color = tumor_distribution$tumor}
+    print(ggplot(tumor_distribution, aes(fill=fill_color, y=Freq, x=cluster)) + 
+        ggtitle("Tumor Cluster Distribution") + theme_classic() +
+        theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5)) +
+        geom_bar(position="stack", stat="identity"))
+    
+      print(ggplot(tumor_distribution, aes(fill=tumor, y=Freq, x=cluster)) + 
+        ggtitle("Tumor Cluster Distribution") + theme_classic() +
+        theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5)) +
+        geom_bar(position="dodge", stat="identity"))
+    
+      print(ggplot(tumor_distribution, aes(fill=tumor, y=Freq, x=cluster)) + 
+        ggtitle("Tumor Cluster Distribution") + theme_classic() +
+        theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5)) +
+        geom_bar(position="fill", stat="identity"))
+
+      print(ggplot(tumor_distribution, aes(fill=cluster, y=Freq, x=tumor)) + 
+        ggtitle("Tumor Cluster Distribution") + theme_classic() +
+        theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5)) +
+        geom_bar(position="fill", stat="identity")) + coord_fixed(2)
+    
+  }
+  
+  # Clonotypes
+  totals <- as.data.frame(table(tc@meta.data[[group]], tc@meta.data$orig.ident))
+  names(totals)[names(totals) == "Freq"] <- "total"
+  names(totals)[names(totals) == "Var1"] <- "cluster"
+  totals$Var2 <- NULL
+    
+  if (avg_clonosize) {
+    
+  } else {
+    for(n in 2:5){
+      clonotype_distribution <- as.data.frame(table(tc@meta.data[[size]]>=n, tc$tumor, tc@meta.data[[group]]))
+      clonotype_distribution <- clonotype_distribution[!(clonotype_distribution$Var1==FALSE),]
+      names(clonotype_distribution)[names(clonotype_distribution) == "Var2"] <- "tumor"
+      names(clonotype_distribution)[names(clonotype_distribution) == "Var3"] <- "cluster"
+      
+      clonotype_distribution <- merge(clonotype_distribution, totals, by="cluster")
+      clonotype_distribution <- transform(clonotype_distribution, percent = Freq/total*100)
+      
+      if (no_tumor) {fill_color="Cells"
+      type_graph="stack"} else {fill_color = clonotype_distribution$tumor 
+      type_graph="dodge"}
+      
+      print(ggplot(clonotype_distribution, aes(fill=fill_color, y=Freq, x=cluster)) + 
+          ggtitle(paste(size, ">=", n, "Tumor Cluster Distribution")) + theme_classic() +
+          theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5)) +
+          geom_bar(position=type_graph, stat="identity"))
+      # print(ggplot(clonotype_distribution, aes(fill=tumor, y=Freq, x=cluster)) + 
+      #     ggtitle(paste("Clonosize >=", n, " Tumor Cluster Distribution")) +
+      #     theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5)) +
+      #     geom_bar(position="stack", stat="identity"))
+      # 
+      # print(ggplot(clonotype_distribution, aes(fill=tumor, y=Freq, x=cluster)) + 
+      #   ggtitle(paste("Clonosize >=", n, " Tumor Cluster Distribution")) +
+      #   theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5)) +
+      #   geom_bar(position="fill", stat="identity"))
+      if (group!="cellType") {
+        print(ggplot(clonotype_distribution, aes(fill=fill_color, y=percent, x=cluster)) + 
+          ggtitle(paste(size, ">=", n, "Tumor Cluster Distribution")) + theme_classic() +
+          theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5)) +
+          geom_bar(position=type_graph, stat="identity"))
+      }
+    }
+  }
+}
+
+```
+
+```{r}
+clonosize_graphs("subclusters")
+clonosize_graphs("cellType")
+clonosize_graphs("subclusters", no_tumor = TRUE)
+# clonosize_graphs("cellTypeGene", avg_clonosize = TRUE)
+# clonosize_graphs("cellTypeGene", no_tumor = TRUE, avg_clonosize = TRUE)
+
+plot(density(x = tc@meta.data$clonosize))
+
+```
+```{r}
+# on proportion z test
+
+table <- table(tc$tumor, tc@meta.data[["subclusters"]])
+table
+
+for (i in 1:(length(table)/2)){
+  print(colnames(table)[i])
+  print(binom.test(table[,i]))
+}
+
+```
+```{r}
+# two  proportion z test
+
+table <- table(tc$tumor, tc@meta.data[["cellType"]])
+table
+
+for (i in 1:(length(table)/2)){
+  print(colnames(table)[i])
+  print(prop.test(x = table[,i], n = c(sum(table[1,]), sum(table[2,])) ))
+}
+
+```
+
+```{r}
+# on proportion z test
+
+table <- table(subset(tc, subset= clonosize >=2)$tumor, subset(tc, subset= clonosize >=2)@meta.data[["subclusters"]])
+table
+
+for (i in 1:(length(table)/2)){
+  print(colnames(table)[i])
+  print(binom.test(table[,i]))
+}
+
+```
+
+```{r}
+RidgePlot(tc, features = "clonosize", sort = FALSE)
+VlnPlot(subset(tc, subset = tumor == "b16"), features = "clonosize", sort = FALSE, pt.size = 0, y.max=12.5)
+VlnPlot(subset(tc, subset = tumor == "b16il33"), features = "clonosize", sort = FALSE, pt.size = 0, y.max=12.5)
+
+VlnPlot(tc, features = "clonosize", sort = FALSE, split.by="tumor", pt.size = 0, y.max=12.5)
+
+VlnPlot(subset(tc, subset = tumor == "b16" & clonosize >=2), features = "clonosize", sort = FALSE, pt.size = 0, y.max=12)
+VlnPlot(subset(tc, subset = tumor == "b16il33" & clonosize >=2), features = "clonosize", sort = FALSE, pt.size = 0, y.max=12)
+
+VlnPlot(subset(tc, subset = clonosize >= 2), features = "clonosize", sort = FALSE, split.by="tumor", split.plot=TRUE, pt.size = 0, adjust=2, y.max=12)
+
+```
+
+```{r}
+# Packages
+library(plyr)
+library(circlize)
+library(imager)
+library(scales)
+library(pheatmap)
+library(VennDiagram)
+library(knitr)
+
+clonotype_graphs <- function(seurat_object, title, id="clonotype_id") {
+  
+  colors <- hue_pal()(length(unique(seurat_object@meta.data[["subclusters"]])))
+  names(colors) <- unique(seurat_object@meta.data[["subclusters"]])
+  
+  clonotypes <- as.data.frame.matrix(table(seurat_object@meta.data[[id]], seurat_object$subclusters))
+  clonotypes <- clonotypes[, colSums(clonotypes)>0]
+  cluster_clonotypes <- read.csv(text="cluster,clonotypes,clonotypes_percent,shared_clonotypes,shared_clonotypes_percent")
+  
+  for (cluster_name in colnames(clonotypes)){
+    shared_clonotypes <- clonotypes[!(clonotypes[,cluster_name]==0),]
+    total = table(tc@meta.data$subclusters, tc@meta.data$orig.ident)[cluster_name, "tc800"]
+    others = subset(shared_clonotypes, select = names(shared_clonotypes) != cluster_name)
+    num = sum(shared_clonotypes[cluster_name])
+    shared = sum(shared_clonotypes[rowSums(others)>0, ][,cluster_name])
+    cluster_clonotypes <- cluster_clonotypes %>% add_row(clonotypes = num, clonotypes_percent = num/total*100, shared_clonotypes = shared, shared_clonotypes_percent = shared/total*100)
+  }
+  
+  cluster_clonotypes$cluster <- colnames(clonotypes)
+  
+  rm(cluster_name, shared_clonotypes, total, others, num, shared) # Cleanup
+  
+  max = max(cluster_clonotypes$clonotypes_percent)+5
+  print(max)
+  
+  print(ggplot(cluster_clonotypes, aes(x=clonotypes_percent, y=shared_clonotypes_percent, color=cluster))+
+          geom_point(size=5) + theme_classic()+
+          xlab("Clonal cells in each cluster (%)") + ylab("Shared clonal cells in each cluster (%)")+
+          scale_colour_manual(values = colors)+
+          ggtitle(title)+
+          coord_fixed(xlim=c(0, max), ylim=c(0, max)))
+  
+  
+  clonotypes <- clonotypes %>% mutate_if(is.numeric, ~1 * (. != 0))
+  mat <- crossprod(as.matrix(clonotypes))
+  
+  # Chord Diagram
+  chordDiagram(mat, grid.col = colors, annotationTrack = c("name", "grid"),
+    annotationTrackHeight = c(0.1, 0.07))
+  chordDiagram(mat, grid.col = colors, scale = TRUE, annotationTrack = c("name", "grid"),
+    annotationTrackHeight = c(0.1, 0.07))
+  chordDiagram(mat, grid.col = colors, symmetric = TRUE, annotationTrack = c("name", "grid"),
+    annotationTrackHeight = c(0.1, 0.07))
+  chordDiagram(mat, grid.col = colors, scale = TRUE, symmetric = TRUE, annotationTrack = c("name", "grid"),
+    annotationTrackHeight = c(0.1, 0.07))
+
+  # Heatmap
+  mat <- floor(t(mat * 100 / diag(mat)))
+  annotations <- data.frame(Cluster = colnames(mat))
+  rownames(annotations) <- colnames(mat)
+  
+  mat_colors <- as.list(colors)
+
+  pheatmap(mat, border_color = "black",cluster_cols=F, cluster_rows=F,
+           cellwidth = 30, cellheight = 30,
+           annotation_col = annotations, annotation_row = annotations,
+           annotation_colors = mat_colors, colorRampPalette(brewer.pal(n = 7, name =
+  "Reds"))(100),
+           border=NA, display_numbers = F)
+  
+}
+  
+```
+```{r fig.width=7, fig.height=7}
+clonotype_graphs(subset(tc, subset = clonosize >= 2), "All Cells")
+clonotype_graphs(subset(tc, subset = clonosize >= 2 & tumor == "b16"), "All b16 Cells")
+clonotype_graphs(subset(tc, subset = clonosize >= 2 & tumor == "b16il33"), "All b16il33 Cells")
+
+```
+```{r}
+# Packages
+library(plyr)
+library(circlize)
+library(imager)
+library(scales)
+library(pheatmap)
+library(VennDiagram)
+library(knitr)
+library(RColorBrewer)
+
+clonotype_graphs <- function(seurat_object, title, id="clonotype_id") {
+  
+  colors <- hue_pal()(length(unique(seurat_object@meta.data[["cellType"]])))
+  names(colors) <- unique(seurat_object@meta.data[["cellType"]])
+  
+  clonotypes <- as.data.frame.matrix(table(seurat_object@meta.data[[id]], seurat_object$cellType))
+  clonotypes <- clonotypes[, colSums(clonotypes)>0]
+  cluster_clonotypes <- read.csv(text="cluster,clonotypes,clonotypes_percent,shared_clonotypes,shared_clonotypes_percent")
+  
+  for (cluster_name in colnames(clonotypes)){
+    shared_clonotypes <- clonotypes[!(clonotypes[,cluster_name]==0),]
+    total = table(tc@meta.data$cellType, tc@meta.data$orig.ident)[cluster_name, "tc800"]
+    others = subset(shared_clonotypes, select = names(shared_clonotypes) != cluster_name)
+    num = sum(shared_clonotypes[cluster_name])
+    shared = sum(shared_clonotypes[rowSums(others)>0, ][,cluster_name])
+    cluster_clonotypes <- cluster_clonotypes %>% add_row(clonotypes = num, clonotypes_percent = num/total*100, shared_clonotypes = shared, shared_clonotypes_percent = shared/total*100)
+  }
+  
+  cluster_clonotypes$cluster <- colnames(clonotypes)
+  
+  rm(cluster_name, shared_clonotypes, total, others, num, shared) # Cleanup
+  
+  max = max(cluster_clonotypes$clonotypes_percent)+5
+  print(max)
+  
+  print(ggplot(cluster_clonotypes, aes(x=clonotypes_percent, y=shared_clonotypes_percent, color=cluster))+
+          geom_point(size=5) + theme_classic()+
+          xlab("Clonal cells in each cluster (%)") + ylab("Shared clonal cells in each cluster (%)")+
+          scale_colour_manual(values = colors)+
+          ggtitle(title)+
+          coord_fixed(xlim=c(0, max), ylim=c(0, max)))
+  
+  
+  clonotypes <- clonotypes %>% mutate_if(is.numeric, ~1 * (. != 0))
+  mat <- crossprod(as.matrix(clonotypes))
+  
+  # Chord Diagram
+  chordDiagram(mat, grid.col = colors, annotationTrack = c("name", "grid"),
+    annotationTrackHeight = c(0.1, 0.07))
+  chordDiagram(mat, grid.col = colors, scale = TRUE, annotationTrack = c("name", "grid"),
+    annotationTrackHeight = c(0.1, 0.07))
+  chordDiagram(mat, grid.col = colors, symmetric = TRUE, annotationTrack = c("name", "grid"),
+    annotationTrackHeight = c(0.1, 0.07))
+  chordDiagram(mat, grid.col = colors, scale = TRUE, symmetric = TRUE, annotationTrack = c("name", "grid"),
+    annotationTrackHeight = c(0.1, 0.07))
+  
+  print(mat)
+
+  
+  # Heatmap
+  mat <- floor(t(mat * 100 / diag(mat)))
+  annotations <- data.frame(Cluster = colnames(mat))
+  rownames(annotations) <- colnames(mat)
+  
+  mat_colors <- as.list(colors)
+
+  pheatmap(mat, border_color = "black",cluster_cols=F, cluster_rows=F,
+           cellwidth = 30, cellheight = 30,
+           annotation_col = annotations, annotation_row = annotations,
+           annotation_colors = mat_colors, colorRampPalette(brewer.pal(n = 7, name =
+  "Reds"))(100),
+           border=NA, display_numbers = F)
+  
+}
+  
+```
+```{r fig.width=7, fig.height=7}
+clonotype_graphs(subset(tc, subset = clonosize >= 2), "All Cells")
+clonotype_graphs(subset(tc, subset = clonosize >= 2 & tumor == "b16"), "All b16 Cells")
+clonotype_graphs(subset(tc, subset = clonosize >= 2 & tumor == "b16il33"), "All b16il33 Cells")
+
+```
+
+```{r}
+# Cell Cycle
+
+capitalize <- function(x) {
+  x <- tolower(x)
+  substr(x, 1, 1) <- toupper(substr(x, 1, 1))
+  x
+}
+
+s.genes <- capitalize(cc.genes$s.genes)
+g2m.genes <- capitalize(cc.genes$g2m.genes)
+
+tc <- CellCycleScoring(tc, s.features = s.genes, g2m.features = g2m.genes)
+
+DimPlot(tc, reduction = "umap", group.by = "Phase")
+
+```
+
+```{r fig.height = 4, fig.width=10}
+DimPlot(tc, reduction = "umap", split.by = "Phase")
+
+```
+
+```{r fig.height=7, fig.width=11}
+Idents(tc) <- tc$clusternum
+levels(tc) <- c("Treg-C6-Isg15", "Treg-C5-Stmn1", "Treg-C4-Nhp2", "Treg-C3-Lag3", "Treg-C2-Il1rl1", "Treg-C1-Glrx", "CD4-C1-Ahnak", "CD4-C1-Il17a", "CD4-C1-Ramp3", "CD4-C1-Igfbp4", "CD4-C1-Hspa1a", "CD4-C1-Ccl5", "CD8-C6-Ccr7", "CD8-C5-Gzma", "CD8-C4-Gzmc", "CD8-C3-Dusp1", "CD8-C2-Id3", "CD8-C1-Ccl4")
+
+p <- VlnPlot(tc, features = c("Isg15", "Stmn1", "Nhp2", "Lag3", "Il1rl1", "Glrx", "Ahnak", "Il17a", "Ramp3", "Igfbp4", "Hspa1a", "Ccl5", "Ccr7", "Gzma", "Gzmc", "Dusp1", "Id3", "Ccl4"), slot = "counts", log = TRUE, sort = FALSE, pt.size=0, stack=TRUE)
+p$layers[[1]]$aes_params$size = 0
+p
+
+```
+```{r}
+library("scales")
+
+# Averages
+# FOOR CD8 cluster.averages <- AverageExpression(subset(tc, features = c("Ccl4", "CCL4", "CRIP1", "GZMK", "GZMB", "NKG7", "INFG", "ID3", "Cd7", "Ccr7", "Tcf7", "Sell", "Dusp1", "Il7r", "Ramp1", "Gata3", "Cxcr4", "Il4", "Jun", Fos)))
+cluster.averages <- AverageExpression(subset(tc, features = c("Tcf7", "Sell", "Lef1", "Ccr7", "Lag3", "Tigit", "Pdcd1", "Havcr2", "Ctla4", "Il2", "Gzma", "Prf1", "Gzmb", "Gzmk", "Ifng", "Nkg7", "Cd28", "Tnfrsf14", "Icos", "Tnfrsf9", "Eomes", "Hopx", "Tbx21", "Zeb2", "Hif1a", "Id2", "Tox", "Il2ra", "Foxp3", "Ikzf2")))
+cluster.averages <- as.matrix.data.frame(cluster.averages[["RNA"]])
+cluster.averages <- t(scale(t(cluster.averages)))
+cluster.averages <- cluster.averages[complete.cases(cluster.averages),]
+#cluster.averages <- t(apply(cluster.averages, 1, rescale, to=c(-1, 1)))
+```
+```{r}
+# Heatmap
+library(RColorBrewer)
+library(knitr)
+
+colors <- hue_pal()(length(unique(tc@meta.data[["subclusters"]])))
+names(colors) <- unique(tc@meta.data[["subclusters"]])
+
+annotations <- data.frame(Cluster = colnames(cluster.averages))
+rownames(annotations) <- colnames(cluster.averages)
+
+mat_colors <- as.list(colors)
+
+pheatmap(cluster.averages,
+         cellwidth = 30, cellheight = 30,
+         annotation_colors = mat_colors,
+         annotation_col = annotations,
+         border=NA, display_numbers = F,
+         cluster_rows=FALSE, cluster_cols=FALSE,
+         gaps_col = c(6, 12),
+         gaps_row = c(4, 9, 16, 20, 27),
+         filename="Graphs/Visualizations/Globalheatmap.pdf")
+
+```
+
+```{r}
+library("scales")
+
+# Averages
+# FOOR CD8 cluster.averages <- AverageExpression(subset(tc, features = c("Ccl4", "CCL4", "CRIP1", "GZMK", "GZMB", "NKG7", "INFG", "ID3", "Cd7", "Ccr7", "Tcf7", "Sell", "Dusp1", "Il7r", "Ramp1", "Gata3", "Cxcr4", "Il4", "Jun", Fos)))
+cluster.averages <- AverageExpression(subset(tc, features = c("Cd27", "Cd40", "Cd28", "Cd274", "Tnfrsf4", "Ctla4", "Icos", "Tnfrsf18", "Pdcd1lg2", "Ceacam1", "Cd80", "Il2", "Cd200r1", "Btla", "Pdcd1", "Lag3", "Tigit", "Tnfrsf9", "Havcr2")))
+cluster.averages <- as.matrix.data.frame(cluster.averages[["RNA"]])
+cluster.averages <- t(scale(t(cluster.averages)))
+cluster.averages <- cluster.averages[complete.cases(cluster.averages),]
+#cluster.averages <- t(apply(cluster.averages, 1, rescale, to=c(-1, 1)))
+```
+```{r}
+# Heatmap
+library(RColorBrewer)
+library(knitr)
+
+colors <- hue_pal()(length(unique(tc@meta.data[["subclusters"]])))
+names(colors) <- unique(tc@meta.data[["subclusters"]])
+
+annotations <- data.frame(Cluster = colnames(cluster.averages))
+rownames(annotations) <- colnames(cluster.averages)
+
+mat_colors <- as.list(colors)
+
+pheatmap(cluster.averages,
+         cellwidth = 30, cellheight = 30,
+         annotation_colors = mat_colors,
+         annotation_col = annotations,
+         border=NA, display_numbers = F,
+         cluster_rows=FALSE, cluster_cols=FALSE,
+         filename="Graphs/Visualizations/ImmunoHeatmap.pdf")
+
+```

@@ -1,0 +1,73 @@
+---
+title: "B16-IL33 SCRNA-Seq All output"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+---
+
+```{r}
+knitr::opts_chunk$set(fig.path = "Graphs/All/")
+knitr::opts_chunk$set(eval = TRUE)
+knitr::opts_chunk$set(dev = c("pdf", "png"))
+
+```
+
+
+```{r}
+# Packages
+library(plyr)
+library(dplyr)
+library(Seurat)
+library(patchwork)
+library(readxl)
+library(sctransform)
+
+#Load Data
+load("Data/Cells/tc.Robj")
+
+```
+
+```{r}
+DimPlot(tc, reduction = "umap")
+
+```
+
+```{r fig.width=10, fig.height=4}
+DimPlot(tc, reduction = "umap", split.by="tumor")
+
+```
+
+```{r}
+DefaultAssay(tc) <- "RNA"
+
+write.csv(Cells(tc), file = "Data/Cells/All/tc.cellID_obs.csv")
+write.table(GetAssayData(tc, slot="data"), file = "Data/Cells/All/tc.matrix_processed_full.csv")
+write.table(GetAssayData(tc, slot="scale.data"), file = "Data/Cells/All/tc.matrix_scaled_full.csv")
+write.table(GetAssayData(subset(tc, features=VariableFeatures(tc)), slot="data"), file = "Data/Cells/All/tc.matrix_processed.csv")
+write.table(GetAssayData(subset(tc, features=VariableFeatures(tc)), slot="scale.data"), file = "Data/Cells/All/tc.matrix_scaled.csv")
+write.table(as.matrix(tc[["RNA"]]@counts), file = "Data/Cells/All/tc.matrix.csv")
+write.csv(tc$tumor, file = "Data/Cells/All/tc.tumor.csv")
+write.csv(Embeddings(tc, reduction = "umap"), file = "Data/Cells/All/tc.cell_embeddings_umap.csv")
+write.csv(tc$cellTypeGene, file = "Data/Cells/All/tc.clusters.csv")
+write.csv(tc$cellType, file = "Data/Cells/All/tc.celltype.csv")
+
+```
+
+```{r}
+DefaultAssay(tc) <- "RNA"
+
+# Convert to loom
+for(j in 1:ncol(tc@meta.data)){
+if(is.factor(tc@meta.data[,j]) == T){
+tc@meta.data[,j] = as.character(tc@meta.data[,j]) # Force the variable type to be character
+tc@meta.data[,j][is.na(tc@meta.data[,j])] <- "None"
+}
+if(is.character(tc@meta.data[,j]) == T){
+tc@meta.data[,j][is.na(tc@meta.data[,j])] <- "None"
+}
+}
+
+as.loom(tc, filename = "Data/Cells/All/tc.loom", verbose = FALSE)
+
+```

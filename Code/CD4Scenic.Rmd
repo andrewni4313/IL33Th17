@@ -1,0 +1,492 @@
+---
+title: "B16-IL33 SCRNA-Seq Analysis Treg Analysis"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+---
+
+```{r}
+knitr::opts_chunk$set(fig.path = "Graphs/CD4/SCENIC")
+knitr::opts_chunk$set(eval = TRUE)
+de
+knitr::opts_chunk$set(dev = c("pdf", "png"))
+
+```
+
+```{r}
+# Packages
+library(plyr)
+library(dplyr)
+library(Seurat)
+library(patchwork)
+library(readxl)
+library(sctransform)
+library(xlsx)
+
+#Load Data
+load(file="Data/Cells/CD4/tc.cd4.robj")
+
+auc <- t(read.csv("Data/Cells/CD4/SCENIC/auc.csv", row.names = 1))
+binary <- t(read.csv("Data/Cells/CD4/SCENIC/binary.csv", row.names = 1))
+
+tc.cd4@meta.data[["cluster-tumor"]] <- paste(tc.cd4$cd4type, tc.cd4$tumor, sep='-')
+
+rownames(auc) <- gsub("\\.\\.\\.", "", rownames(auc))
+rownames(binary) <- gsub("\\.\\.\\.", "", rownames(binary))
+
+tc.cd4[["AUC"]] <- CreateAssayObject(counts = auc)
+tc.cd4[["Binary"]] <- CreateAssayObject(counts = binary)
+
+```
+
+```{r fig.height=5, fig.width=7}
+tc.cd4[["AUC"]] <- CreateAssayObject(counts = auc)
+
+# Scale
+tc.cd4 <- ScaleData(tc.cd4, assay = "AUC", features=tc.cd4@assays[["AUC"]]@data@Dimnames[[1]])
+
+# Cluster
+tc.cd4 <- RunPCA(tc.cd4, assay = "AUC", features=tc.cd4@assays[["AUC"]]@data@Dimnames[[1]])
+tc.cd4 <- FindNeighbors(tc.cd4, assay = "AUC", dims = 1:20)
+tc.cd4 <- FindClusters(tc.cd4, graph.name = "AUC_snn", resolution = 0.8)
+
+# Dimension Reduction
+tc.cd4 <- RunUMAP(tc.cd4, assay = "AUC", reduction.name = "umapAUC", umap.method = "umap-learn", dims = 1:20, reduction.key='umapauc_')
+DimPlot(tc.cd4, reduction = "umapAUC", label=TRUE)
+DimPlot(tc.cd4, reduction = "umapAUC", group.by = "tumor")
+DimPlot(tc.cd4, reduction = "umapAUC", group.by = "cd4type", label=TRUE)
+
+tc.cd4$auc <- Idents(tc.cd4)
+
+```
+```{r fig.height=5, fig.width=10}
+DimPlot(tc.cd4, reduction = "umapAUC", split.by="tumor", ncol=3)
+
+```
+
+```{r}
+# find markers for every cluster compared to all remaining cells, report only the positive ones
+Idents(tc.cd4) <- 'cd4type'
+
+tc.cd4.markers <- FindAllMarkers(tc.cd4, assay = "AUC", only.pos = TRUE, min.pct = 0, logfc.threshold = 0)
+tc.cd4.markers %>% group_by(cluster) %>% top_n(n = 2, wt = avg_logFC)
+
+top3 <- tc.cd4.markers %>% group_by(cluster) %>% top_n(n = 3, wt = avg_logFC)
+DoHeatmap(tc.cd4, assay="AUC", features = top3$gene) + NoLegend()
+
+top1 <- tc.cd4.markers %>% group_by(cluster) %>% top_n(n = 1, wt = avg_logFC)
+DoHeatmap(tc.cd4, assay="AUC", features = top1$gene) + NoLegend()
+
+rm(top1, top3) # Cleanup
+
+```
+```{r}
+# find markers for every cluster compared to all remaining cells, report only the positive ones
+Idents(tc.cd4) <- 'auc'
+
+tc.cd4.markers <- FindAllMarkers(tc.cd4, assay = "AUC", only.pos = TRUE, min.pct = 0, logfc.threshold = 0)
+tc.cd4.markers %>% group_by(cluster) %>% top_n(n = 2, wt = avg_logFC)
+
+top3 <- tc.cd4.markers %>% group_by(cluster) %>% top_n(n = 3, wt = avg_logFC)
+DoHeatmap(tc.cd4, assay="AUC", features = top3$gene) + NoLegend()
+
+top1 <- tc.cd4.markers %>% group_by(cluster) %>% top_n(n = 1, wt = avg_logFC)
+DoHeatmap(tc.cd4, assay="AUC", features = top1$gene) + NoLegend()
+
+rm(top1, top3) # Cleanup
+
+```
+
+```{r fig.height=15, fig.width=15}
+FeaturePlot(tc.cd4, reduction = "umapAUC", features=c('auc_Junb', 'auc_Tcf7', 'auc_Etv1', 'auc_Irf7', 'auc_Etv6', 'auc_Bmyc', 'auc_Gm14308', 'auc_Tfdp2'), pt.size=0.5)
+
+```
+
+```{r}
+# find markers for every cluster compared to all remaining cells, report only the positive ones
+tc.cd4@meta.data[["cluster-tumor-auc"]] <- paste(tc.cd4$auc, tc.cd4$tumor, sep='-')
+Idents(tc.cd4) <- 'cluster-tumor-auc'
+
+for (num in 1:(length(unique(tc.cd4$`cluster-tumor-auc`))/2)) {
+  
+  ident.1<-sort(unique(tc.cd4$`cluster-tumor-auc`))[2*num-1]
+  ident.2<-sort(unique(tc.cd4$`cluster-tumor-auc`))[2*num]
+  
+  tc.cd4.markers <- FindMarkers(tc.cd4, assay = "AUC", ident.1 = ident.1, ident.2 = ident.2,
+                            only.pos = FALSE, min.pct = 0, logfc.threshold = 0)
+  
+  top3 <- tc.cd4.markers %>% top_n(n = 3, wt = avg_logFC)
+  print(DoHeatmap(subset(tc.cd4, subset = (`cluster-tumor-auc` == ident.1 | `cluster-tumor-auc` == ident.2)), assay="AUC", features = rownames(top3)) + NoLegend())
+
+  rm(top3)
+  
+}
+
+for (num in 1:(length(unique(tc.cd4$`cluster-tumor-auc`))/2)) {
+  
+  ident.1<-sort(unique(tc.cd4$`cluster-tumor-auc`))[2*num-1]
+  ident.2<-sort(unique(tc.cd4$`cluster-tumor-auc`))[2*num]
+  
+  tc.cd4.markers <- FindMarkers(tc.cd4, assay = "AUC", ident.1 = ident.2, ident.2 = ident.1,
+                            only.pos = FALSE, min.pct = 0, logfc.threshold = 0)
+  
+  top3 <- tc.cd4.markers %>% top_n(n = 3, wt = avg_logFC)
+  print(DoHeatmap(subset(tc.cd4, subset = (`cluster-tumor-auc` == ident.1 | `cluster-tumor-auc` == ident.2)), assay="AUC", features = rownames(top3)) + NoLegend())
+
+  rm(top3)
+  
+}
+
+```
+
+```{r}
+# find markers for every cluster compared to all remaining cells, report only the positive ones
+Idents(tc.cd4) <- 'cluster-tumor'
+
+for (num in 1:(length(unique(tc.cd4$`cluster-tumor`))/2)) {
+  
+  ident.1<-sort(unique(tc.cd4$`cluster-tumor`))[2*num-1]
+  ident.2<-sort(unique(tc.cd4$`cluster-tumor`))[2*num]
+  
+  tc.cd4.markers <- FindMarkers(tc.cd4, assay = "AUC", ident.1 = ident.1, ident.2 = ident.2,
+                            only.pos = TRUE, min.pct = 0, logfc.threshold = 0)
+  
+  top3 <- c(rownames(tc.cd4.markers)[0:3])
+  print(DoHeatmap(subset(tc.cd4, subset = (`cluster-tumor` == ident.1 | `cluster-tumor` == ident.2)), assay="AUC", features = top3) + NoLegend())
+
+  rm(top3)
+  
+  write.xlsx(tc.cd4.markers, paste0("Data/Cells/CD4/SCENIC/Comparisons/", ident.1, ".xlsx"), row.names = TRUE, col.names = TRUE)
+  
+}
+
+for (num in 1:(length(unique(tc.cd4$`cluster-tumor`))/2)) {
+  
+  ident.1<-sort(unique(tc.cd4$`cluster-tumor`))[2*num-1]
+  ident.2<-sort(unique(tc.cd4$`cluster-tumor`))[2*num]
+  
+  tc.cd4.markers <- FindMarkers(tc.cd4, assay = "AUC", ident.1 = ident.2, ident.2 = ident.1,
+                            only.pos = TRUE, min.pct = 0, logfc.threshold = 0)
+  
+  top3 <- c(rownames(tc.cd4.markers)[0:3])
+  print(DoHeatmap(subset(tc.cd4, subset = (`cluster-tumor` == ident.1 | `cluster-tumor` == ident.2)), assay="AUC", features = top3) + NoLegend())
+
+  rm(top3)
+  
+  write.xlsx(tc.cd4.markers, paste0("Data/Cells/CD4/SCENIC/Comparisons/", ident.2, ".xlsx"), row.names = TRUE, col.names = TRUE)
+  
+}
+
+```
+
+```{r fig.height=5, fig.width=7}
+tc.cd4[["Binary"]] <- CreateAssayObject(counts = binary)
+
+# Scale
+tc.cd4 <- ScaleData(tc.cd4, assay = "Binary", features=tc.cd4@assays[["Binary"]]@data@Dimnames[[1]])
+
+# Cluster
+tc.cd4 <- RunPCA(tc.cd4, assay = "Binary", features=tc.cd4@assays[["Binary"]]@data@Dimnames[[1]])
+tc.cd4 <- FindNeighbors(tc.cd4, assay = "Binary", dims = 1:20)
+tc.cd4 <- FindClusters(tc.cd4, graph.name = "Binary_snn", resolution = 0.8)
+
+# Dimension Reduction
+tc.cd4 <- RunUMAP(tc.cd4, assay = "Binary", reduction.name = "umapBinary", umap.method = "umap-learn", dims = 1:20, reduction.key='umapbinary_')
+DimPlot(tc.cd4, reduction = "umapBinary", label=TRUE)
+DimPlot(tc.cd4, reduction = "umapBinary", group.by = "tumor")
+DimPlot(tc.cd4, reduction = "umapBinary", group.by = "cd4type", label=TRUE)
+
+tc.cd4$binary <- Idents(tc.cd4)
+
+```
+
+```{r fig.height=5, fig.width=10}
+DimPlot(tc.cd4, reduction = "umapBinary", split.by="tumor", ncol=3)
+
+```
+```{r}
+Idents(tc.cd4) <- "cd4type"
+
+# find markers for every cluster compared to all remaining cells, report only the positive ones
+tc.cd4.markers <- FindAllMarkers(tc.cd4, assay = "Binary", only.pos = TRUE, min.pct = 0, logfc.threshold = 0, slot='counts')
+tc.cd4.markers %>% group_by(cluster) %>% top_n(n = 2, wt = avg_logFC)
+
+top3 <- tc.cd4.markers %>% group_by(cluster) %>% top_n(n = 3, wt = avg_logFC)
+DoHeatmap(tc.cd4, assay="Binary", features = top3$gene, slot='counts') + NoLegend()
+
+top1 <- tc.cd4.markers %>% group_by(cluster) %>% top_n(n = 1, wt = avg_logFC)
+DoHeatmap(tc.cd4, assay="Binary", features = top1$gene, slot='counts') + NoLegend()
+
+rm(top1, top3) # Cleanup
+
+```
+
+```{r}
+Idents(tc.cd4) <- "binary"
+
+# find markers for every cluster compared to all remaining cells, report only the positive ones
+tc.cd4.markers <- FindAllMarkers(tc.cd4, assay = "Binary", only.pos = TRUE, min.pct = 0, logfc.threshold = 0, slot='counts')
+tc.cd4.markers %>% group_by(cluster) %>% top_n(n = 2, wt = avg_logFC)
+
+top3 <- tc.cd4.markers %>% group_by(cluster) %>% top_n(n = 3, wt = avg_logFC)
+DoHeatmap(tc.cd4, assay="Binary", features = top3$gene, slot='counts') + NoLegend()
+
+top1 <- tc.cd4.markers %>% group_by(cluster) %>% top_n(n = 1, wt = avg_logFC)
+DoHeatmap(tc.cd4, assay="Binary", features = top1$gene, slot='counts') + NoLegend()
+
+rm(top1, top3) # Cleanup
+
+```
+
+```{r fig.height=15, fig.width=20}
+FeaturePlot(tc.cd4, reduction = "umapBinary", features=c('binary_Klf12', 'binary_Elk4', 'binary_E2f2', 'binary_Vdr', 'binary_Lef1', 'binary_Bcl3', 'binary_Jund', 'binary_Runx1'), pt.size=0.5)
+
+```
+
+```{r}
+# find markers for every cluster compared to all remaining cells, report only the positive ones
+Idents(tc.cd4) <- 'cluster-tumor-auc'
+
+for (num in 1:(length(unique(tc.cd4$`cluster-tumor-auc`))/2)) {
+  
+  ident.1<-sort(unique(tc.cd4$`cluster-tumor-auc`))[2*num-1]
+  ident.2<-sort(unique(tc.cd4$`cluster-tumor-auc`))[2*num]
+  
+  tc.cd4.markers <- FindMarkers(tc.cd4, assay = "Binary", ident.1 = ident.1, ident.2 = ident.2,
+                            only.pos = FALSE, min.pct = 0, logfc.threshold = 0)
+  
+  top3 <- tc.cd4.markers %>% top_n(n = 3, wt = avg_logFC)
+  print(DoHeatmap(subset(tc.cd4, subset = (`cluster-tumor-auc` == ident.1 | `cluster-tumor-auc` == ident.2)), assay="Binary", features = rownames(top3), slot='counts') + NoLegend())
+
+  rm(top3)
+  
+}
+
+for (num in 1:(length(unique(tc.cd4$`cluster-tumor-auc`))/2)) {
+  
+  ident.1<-sort(unique(tc.cd4$`cluster-tumor-auc`))[2*num-1]
+  ident.2<-sort(unique(tc.cd4$`cluster-tumor-auc`))[2*num]
+  
+  tc.cd4.markers <- FindMarkers(tc.cd4, assay = "Binary", ident.1 = ident.2, ident.2 = ident.1,
+                            only.pos = FALSE, min.pct = 0, logfc.threshold = 0)
+  
+  top3 <- tc.cd4.markers %>% top_n(n = 3, wt = avg_logFC)
+  print(DoHeatmap(subset(tc.cd4, subset = (`cluster-tumor-auc` == ident.1 | `cluster-tumor-auc` == ident.2)), assay="Binary", features = rownames(top3), slot='counts') + NoLegend())
+
+  rm(top3)
+  
+}
+
+```
+
+```{r}
+# find markers for every cluster compared to all remaining cells, report only the positive ones
+tc.cd4@meta.data[["cluster-tumor-binary"]] <- paste(tc.cd4$binary, tc.cd4$tumor, sep='-')
+Idents(tc.cd4) <- 'cluster-tumor-binary'
+
+for (num in 1:(length(unique(tc.cd4$`cluster-tumor-binary`))/2)) {
+  
+  ident.1<-sort(unique(tc.cd4$`cluster-tumor-binary`))[2*num-1]
+  ident.2<-sort(unique(tc.cd4$`cluster-tumor-binary`))[2*num]
+  
+  tc.cd4.markers <- FindMarkers(tc.cd4, assay = "AUC", ident.1 = ident.1, ident.2 = ident.2,
+                            only.pos = FALSE, min.pct = 0, logfc.threshold = 0)
+  
+  top3 <- tc.cd4.markers %>% top_n(n = 3, wt = avg_logFC)
+  print(DoHeatmap(subset(tc.cd4, subset = (`cluster-tumor-binary` == ident.1 | `cluster-tumor-binary` == ident.2)), assay="AUC", features = rownames(top3), slot='counts') + NoLegend())
+
+  rm(top3)
+  
+}
+
+for (num in 1:(length(unique(tc.cd4$`cluster-tumor-binary`))/2)) {
+  
+  ident.1<-sort(unique(tc.cd4$`cluster-tumor-binary`))[2*num-1]
+  ident.2<-sort(unique(tc.cd4$`cluster-tumor-binary`))[2*num]
+  
+  tc.cd4.markers <- FindMarkers(tc.cd4, assay = "AUC", ident.1 = ident.2, ident.2 = ident.1,
+                            only.pos = FALSE, min.pct = 0, logfc.threshold = 0)
+  
+  top3 <- tc.cd4.markers %>% top_n(n = 3, wt = avg_logFC)
+  print(DoHeatmap(subset(tc.cd4, subset = (`cluster-tumor-binary` == ident.1 | `cluster-tumor-binary` == ident.2)), assay="AUC", features = rownames(top3), slot='counts') + NoLegend())
+
+  rm(top3)
+  
+}
+
+```
+
+```{r}
+# find markers for every cluster compared to all remaining cells, report only the positive ones
+tc.cd4@meta.data[["cluster-tumor-binary"]] <- paste(tc.cd4$binary, tc.cd4$tumor, sep='-')
+Idents(tc.cd4) <- 'cluster-tumor-binary'
+
+for (num in 1:(length(unique(tc.cd4$`cluster-tumor-binary`))/2)) {
+  
+  ident.1<-sort(unique(tc.cd4$`cluster-tumor-binary`))[2*num-1]
+  ident.2<-sort(unique(tc.cd4$`cluster-tumor-binary`))[2*num]
+  
+  tc.cd4.markers <- FindMarkers(tc.cd4, assay = "Binary", ident.1 = ident.1, ident.2 = ident.2,
+                            only.pos = FALSE, min.pct = 0, logfc.threshold = 0, slot='counts')
+  
+  top3 <- tc.cd4.markers %>% top_n(n = 3, wt = avg_logFC)
+  print(DoHeatmap(subset(tc.cd4, subset = (`cluster-tumor-binary` == ident.1 | `cluster-tumor-binary` == ident.2)), assay="Binary", features = rownames(top3), slot='counts') + NoLegend())
+
+  rm(top3)
+  
+}
+
+for (num in 1:(length(unique(tc.cd4$`cluster-tumor-binary`))/2)) {
+  
+  ident.1<-sort(unique(tc.cd4$`cluster-tumor-binary`))[2*num-1]
+  ident.2<-sort(unique(tc.cd4$`cluster-tumor-binary`))[2*num]
+  
+  tc.cd4.markers <- FindMarkers(tc.cd4, assay = "Binary", ident.1 = ident.2, ident.2 = ident.1,
+                            only.pos = FALSE, min.pct = 0, logfc.threshold = 0, slot='counts')
+  
+  top3 <- tc.cd4.markers %>% top_n(n = 3, wt = avg_logFC)
+  print(DoHeatmap(subset(tc.cd4, subset = (`cluster-tumor-binary` == ident.1 | `cluster-tumor-binary` == ident.2)), assay="Binary", features = rownames(top3), slot='counts') + NoLegend())
+
+  rm(top3)
+  
+}
+
+```
+
+```{r}
+# find markers for every cluster compared to all remaining cells, report only the positive ones
+Idents(tc.cd4) <- 'cluster-tumor'
+
+for (num in 1:(length(unique(tc.cd4$`cluster-tumor`))/2)) {
+  
+  ident.1<-sort(unique(tc.cd4$`cluster-tumor`))[2*num-1]
+  ident.2<-sort(unique(tc.cd4$`cluster-tumor`))[2*num]
+  
+  tc.cd4.markers <- FindMarkers(tc.cd4, assay = "Binary", ident.1 = ident.1, ident.2 = ident.2,
+                            only.pos = FALSE, min.pct = 0, logfc.threshold = 0, slot='counts')
+  
+  top3 <- tc.cd4.markers %>% top_n(n = 3, wt = avg_logFC)
+  print(DoHeatmap(subset(tc.cd4, subset = (`cluster-tumor` == ident.1 | `cluster-tumor` == ident.2)), assay="Binary", features = rownames(top3), slot='counts') + NoLegend())
+
+  rm(top3)
+  
+}
+
+for (num in 1:(length(unique(tc.cd4$`cluster-tumor`))/2)) {
+  
+  ident.1<-sort(unique(tc.cd4$`cluster-tumor`))[2*num-1]
+  ident.2<-sort(unique(tc.cd4$`cluster-tumor`))[2*num]
+  
+  tc.cd4.markers <- FindMarkers(tc.cd4, assay = "Binary", ident.1 = ident.2, ident.2 = ident.1,
+                            only.pos = FALSE, min.pct = 0, logfc.threshold = 0, slot='counts')
+  
+  top3 <- tc.cd4.markers %>% top_n(n = 3, wt = avg_logFC)
+  print(DoHeatmap(subset(tc.cd4, subset = (`cluster-tumor` == ident.1 | `cluster-tumor` == ident.2)), assay="Binary", features = rownames(top3), slot='counts') + NoLegend())
+
+  rm(top3)
+  
+}
+
+```
+
+```{r fig.height=5, fig.width=7}
+DimPlot(tc.cd4, reduction = "umap", group.by = "cd4type", label=TRUE)
+DimPlot(tc.cd4, reduction = "umap", group.by = "tumor")
+
+```
+```{r fig.height=5, fig.width=10}
+DimPlot(tc.cd4, reduction = "umap", split.by="tumor", ncol=3, group.by = "cd4type")
+
+```
+
+```{r}
+# find markers for every cluster compared to all remaining cells, report only the positive ones
+Idents(tc.cd4) <- 'cd4type'
+
+tc.cd4.markers <- FindAllMarkers(tc.cd4, assay = "Binary", only.pos = TRUE, min.pct = 0, logfc.threshold = 0, slot='counts')
+tc.cd4.markers %>% group_by(cluster) %>% top_n(n = 2, wt = avg_logFC)
+
+top3 <- tc.cd4.markers %>% group_by(cluster) %>% top_n(n = 3, wt = avg_logFC)
+DoHeatmap(tc.cd4, assay="Binary", features = top3$gene, slot='counts') + NoLegend()
+
+top1 <- tc.cd4.markers %>% group_by(cluster) %>% top_n(n = 1, wt = avg_logFC)
+DoHeatmap(tc.cd4, assay="Binary", features = top1$gene, slot='counts') + NoLegend()
+
+rm(top1, top3) # Cleanup
+
+```
+
+```{r fig.height=20, fig.width=20}
+FeaturePlot(tc.cd4, reduction = "umap", features=c('binary_Klf12', 'binary_Thap1', 'binary_Tfeb', 'binary_Vdr', 'binary_E2f2', 'binary_Gm14327'), pt.size=0.5)
+```
+
+```{r fig.height=35, fig.width=10}
+FeaturePlot(tc.cd4, reduction = "umap", features=c('binary_Klf12', 'binary_Thap1', 'binary_Tfeb', 'binary_Vdr', 'binary_E2f2', 'binary_Gm14327'), pt.size=0.5, split.by="tumor")
+```
+
+```{r}
+# find markers for every cluster compared to all remaining cells, report only the positive ones
+Idents(tc.cd4) <- 'cd4type'
+
+tc.cd4.markers <- FindAllMarkers(tc.cd4, assay = "AUC", only.pos = TRUE, min.pct = 0, logfc.threshold = 0)
+tc.cd4.markers %>% group_by(cluster) %>% top_n(n = 2, wt = avg_logFC)
+
+top3 <- tc.cd4.markers %>% group_by(cluster) %>% top_n(n = 3, wt = avg_logFC)
+DoHeatmap(tc.cd4, assay="AUC", features = top3$gene) + NoLegend()
+
+top1 <- tc.cd4.markers %>% group_by(cluster) %>% top_n(n = 1, wt = avg_logFC)
+DoHeatmap(tc.cd4, assay="AUC", features = top1$gene) + NoLegend()
+
+rm(top1, top3) # Cleanup
+
+```
+```{r fig.height=15, fig.width=15}
+FeaturePlot(tc.cd4, reduction = "umap", features=c('auc_Klf12', 'auc_Runx3', 'auc_Junb', 'auc_Lef1', 'auc_Tfe3', 'Stat3', 'auc_E2f2'), pt.size=0.5, order=TRUE, max.cutoff='q99')
+```
+
+```{r fig.height=40, fig.width=10}
+FeaturePlot(tc.cd4, reduction = "umap", features=c('auc_Klf12', 'auc_Runx3', 'auc_Junb', 'auc_Lef1', 'auc_Tfe3', 'Stat3', 'auc_E2f2'), pt.size=0.5, split.by="tumor", order=TRUE, max.cutoff='q99')
+```
+
+```{r}
+# find markers for every cluster compared to all remaining cells, report only the positive ones
+Idents(tc.cd4) <- 'tumor'
+
+tc.cd4.markers <- FindAllMarkers(tc.cd4, assay = "Binary", only.pos = TRUE, min.pct = 0, logfc.threshold = 0, slot='counts')
+tc.cd4.markers %>% group_by(cluster) %>% top_n(n = 2, wt = avg_logFC)
+
+top3 <- tc.cd4.markers %>% group_by(cluster) %>% top_n(n = 3, wt = avg_logFC)
+DoHeatmap(tc.cd4, assay="Binary", features = top3$gene, slot='counts') + NoLegend()
+
+top1 <- tc.cd4.markers %>% group_by(cluster) %>% top_n(n = 1, wt = avg_logFC)
+DoHeatmap(tc.cd4, assay="Binary", features = top1$gene, slot='counts') + NoLegend()
+
+rm(top1, top3) # Cleanup
+
+```
+
+```{r}
+# find markers for every cluster compared to all remaining cells, report only the positive ones
+Idents(tc.cd4) <- 'tumor'
+
+tc.cd4.markers <- FindAllMarkers(tc.cd4, assay = "AUC", only.pos = TRUE, min.pct = 0, logfc.threshold = 0)
+tc.cd4.markers %>% group_by(cluster) %>% top_n(n = 2, wt = avg_logFC)
+
+top3 <- tc.cd4.markers %>% group_by(cluster) %>% top_n(n = 3, wt = avg_logFC)
+DoHeatmap(tc.cd4, assay="AUC", features = top3$gene) + NoLegend()
+
+top1 <- tc.cd4.markers %>% group_by(cluster) %>% top_n(n = 1, wt = avg_logFC)
+DoHeatmap(tc.cd4, assay="AUC", features = top1$gene) + NoLegend()
+
+rm(top1, top3) # Cleanup
+
+write.xlsx(tc.cd4.markers, paste0("Data/Cells/CD4/SCENIC/Comparisons/CD4-All.xlsx"), row.names = TRUE, col.names = TRUE)
+  
+```
+
+```{r fig.height=15, fig.width=10}
+FeaturePlot(tc.cd4, reduction = "umap", features=c('auc_Jund', 'auc_Fos', 'auc_Fosb'), split.by="tumor", pt.size=0.5, order=TRUE, max.cutoff='q99')
+FeaturePlot(tc.cd4, reduction = "umap", features=c('auc_Sox4', 'auc_Lef1', 'auc_Foxp1'), split.by="tumor", pt.size=0.5, order=TRUE, max.cutoff='q99')
+
+```

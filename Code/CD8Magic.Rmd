@@ -1,0 +1,145 @@
+---
+title: "B16-IL33 SCRNA-Seq Analysis CD8 with MAGIC"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+---
+
+```{r}
+library(reticulate)
+use_python("C:/Users/andre/AppData/Local/Programs/Python/Python38")
+
+knitr::opts_chunk$set(fig.path = "Graphs/CD8/Magic/")
+knitr::opts_chunk$set(eval = TRUE)
+knitr::opts_chunk$set(dev = c("pdf", "png"))
+
+```
+
+
+```{r}
+# Packages
+library(plyr)
+library(dplyr)
+library(Seurat)
+library(patchwork)
+library(readxl)
+library(sctransform)
+library(Rmagic)
+library(ggplot2)
+
+#Load Data
+load("Data/Cells/CD8/tc.cd8.Robj")
+
+```
+
+```{r}
+DefaultAssay(object = tc.cd8) <- "RNA"
+
+```
+
+```{r}
+#Phate
+library(phateR)
+library(viridis)
+
+tc.cd8.data <- t(as.matrix(GetAssayData(object = tc.cd8, slot = "data")))
+tc.cd8.phate <- phate(tc.cd8.data)
+tc.cd8@reductions[["phate"]] <- CreateDimReducObject(embeddings = tc.cd8.phate[["embedding"]], key = "phate_", assay = DefaultAssay(tc.cd8))
+
+DimPlot(tc.cd8, reduction = "phate") & NoAxes()
+
+rm(tc.cd8.phate, tc.cd8.data)
+
+```
+
+```{r fig.height=10, fig.width=9}
+FeaturePlot(tc.cd8, feature=c("Ccl4", "Id3", "Dusp1", "Gzmc", "Gzma", "Ccr7"), reduction = "umap") & NoLegend() & NoAxes()
+FeaturePlot(tc.cd8, feature=c("Ccl4", "Id3", "Dusp1", "Gzmc", "Gzma", "Ccr7"), reduction = "phate") & xlim(-0.04, 0.08) & ylim(-0.03, 0.06) & NoLegend() & NoAxes()
+
+```
+
+```{r fig.height=10, fig.width=18}
+FeaturePlot(tc.cd8, feature=c("Tbx21", "Gata3", "Stat1", "Il1rl1", "Stat4", "Runx3", "Eomes", "Bcl6", "Foxp3", "Il2ra", "Ahr", "Irf4"), reduction = "umap") & NoLegend() & NoAxes()
+FeaturePlot(tc.cd8, feature=c("Tbx21", "Gata3", "Stat1", "Il1rl1", "Stat4", "Runx3", "Eomes", "Bcl6", "Foxp3", "Il2ra", "Ahr", "Irf4"), reduction = "phate") & xlim(-0.04, 0.08) & ylim(-0.03, 0.06) & NoLegend() & NoAxes()
+
+```
+
+```{r}
+# Magic
+tc.cd8 <- magic(tc.cd8, genes=tc.cd8@assays[["RNA"]]@data@Dimnames[[1]])
+DefaultAssay(object = tc.cd8) <- "MAGIC_RNA"
+
+```
+
+```{r}
+tc.cd8 <- ScaleData(tc.cd8, features = VariableFeatures(object = tc.cd8, assay="MAGIC_RNA"))
+
+```
+
+```{r}
+# find markers for every cluster compared to all remaining cells, report only the positive ones
+tc.cd8.markers <- FindAllMarkers(tc.cd8, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25, assay = "RNA")
+tc.cd8.markers %>% group_by(cluster) %>% top_n(n = 2, wt = avg_logFC)
+
+top3 <- tc.cd8.markers %>% group_by(cluster) %>% top_n(n = 3, wt = avg_logFC)
+DoHeatmap(tc.cd8, features = top3$gene) + NoLegend()
+
+top1 <- tc.cd8.markers %>% group_by(cluster) %>% top_n(n = 1, wt = avg_logFC)
+DoHeatmap(tc.cd8, features = top1$gene) + NoLegend()
+
+rm(top1, top3) # Cleanup
+
+```
+
+```{r}
+# find markers for every cluster compared to all remaining cells, report only the positive ones
+tc.cd8.markers <- FindAllMarkers(tc.cd8, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25, assay = "MAGIC_RNA")
+tc.cd8.markers %>% group_by(cluster) %>% top_n(n = 2, wt = avg_logFC)
+
+top3 <- tc.cd8.markers %>% group_by(cluster) %>% top_n(n = 3, wt = avg_logFC)
+DoHeatmap(tc.cd8, features = top3$gene) + NoLegend()
+
+top1 <- tc.cd8.markers %>% group_by(cluster) %>% top_n(n = 1, wt = avg_logFC)
+DoHeatmap(tc.cd8, features = top1$gene) + NoLegend()
+
+rm(top1, top3) # Cleanup
+
+```
+
+```{r}
+DimPlot(tc.cd8, reduction = "phate") & NoAxes()
+DimPlot(tc.cd8, reduction = "umap") & NoAxes()
+
+```
+
+```{r fig.height=10, fig.width=9}
+FeaturePlot(tc.cd8, feature=c("Ccl4", "Id3", "Dusp1", "Gzmc", "Gzma", "Ccr7"), reduction = "umap") & NoLegend() & NoAxes()
+FeaturePlot(tc.cd8, feature=c("Ccl4", "Id3", "Dusp1", "Gzmc", "Gzma", "Ccr7"), reduction = "phate") & xlim(-0.04, 0.08) & ylim(-0.03, 0.06) & NoLegend() & NoAxes()
+
+```
+
+```{r fig.height=10, fig.width=18}
+FeaturePlot(tc.cd8, feature=c("Tbx21", "Gata3", "Stat1", "Il1rl1", "Stat4", "Runx3", "Eomes", "Bcl6", "Foxp3", "Il2ra", "Ahr", "Irf4"), reduction = "umap", max.cutoff='q99') & NoLegend() & NoAxes()
+FeaturePlot(tc.cd8, feature=c("Tbx21", "Gata3", "Stat1", "Il1rl1", "Stat4", "Runx3", "Eomes", "Bcl6", "Foxp3", "Il2ra", "Ahr", "Irf4"), reduction = "phate", max.cutoff='q99') & xlim(-0.04, 0.08) & ylim(-0.03, 0.06) & NoLegend() & NoAxes()
+
+```
+
+```{r fig.height=18, fig.width=6}
+FeaturePlot(tc.cd8, feature=c("Il21", "Il21r", "Stat3", "Il7r", "Il22", "Il6ra", "Il17a", "Il17ra", "Il23a", "Il23r", "Il1rl1", "Il1rap", "Il2", "Il2ra", max.cutoff='q99'), reduction = "umap", ncol=2) & NoLegend() & NoAxes()
+FeaturePlot(tc.cd8, feature=c("Il21", "Il21r", "Stat3", "Il7r", "Il22", "Il6ra", "Il17a", "Il17ra", "Il23a", "Il23r", "Il1rl1", "Il1rap", "Il2", "Il2ra", max.cutoff='q99'), reduction = "phate", ncol=2) & xlim(-0.05, 0.05) & ylim(-0.04, 0.05) & NoLegend() & NoAxes()
+
+```
+```{r}
+DimPlot(tc.cd8, reduction = "umap", split.by="tumor") & NoAxes()
+FeaturePlot(tc.cd8, feature=c("Il17a"), reduction = "umap", split.by="tumor", max.cutoff='q99') & NoLegend() & NoAxes()
+FeaturePlot(tc.cd8, feature=c("Il1rl1"), reduction = "umap", split.by="tumor", max.cutoff='q99') & NoLegend() & NoAxes()
+FeaturePlot(tc.cd8, feature=c("Il1rap"), reduction = "umap", split.by="tumor", max.cutoff='q99') & NoLegend() & NoAxes()
+
+```
+
+```{r}
+DefaultAssay(object = tc.cd8) <- "RNA"
+save(tc.cd8, file="Data/Cells/CD4/tc.cd8.Robj")
+
+```

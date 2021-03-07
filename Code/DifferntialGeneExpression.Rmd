@@ -1,0 +1,392 @@
+---
+title: "Differential Expression Analysis"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+---
+
+```{r}
+knitr::opts_chunk$set(fig.path = "Graphs/tc/")
+knitr::opts_chunk$set(eval = TRUE)
+
+```
+
+```{r}
+# Packages
+library(DESeq2)
+library(edgeR)
+library(EnhancedVolcano)
+
+# Load Data
+tc_matrix <- read.table("Data/Cells/All/tc.matrix.csv")
+
+tc_metadata <- read.csv("Data/Cells/All/tc.tumor.csv", row.names=1)
+colnames(tc_metadata) <- "tumor"
+rownames(tc_metadata) <- gsub("-", ".", rownames(tc_metadata))
+
+```
+
+
+```{r}
+# DESeq2
+# dds <- DESeqDataSetFromMatrix(countData = tc_matrix,
+#                               colData = tc_metadata,
+#                               design= ~ tumor)
+# dds <- DESeq(dds)
+# resultsNames(dds) # lists the coefficients
+# res <- results(dds, name="tumor_b16_vs_b16il33")
+# summary(res)
+
+```
+
+```{r}
+#EdgeR
+dge <- DGEList(tc_matrix, group = factor(tc_metadata$tumor))
+dge <- calcNormFactors(dge)
+cdr <- scale(colMeans(tc_matrix > 0))
+design <- model.matrix(~ cdr + factor(tc_metadata$tumor))
+dge <- estimateDisp(dge, design = design)
+fit <- glmQLFit(dge, design = design)
+qlf <- glmQLFTest(fit)
+tt <- topTags(qlf, n = Inf)
+
+```
+
+```{r}
+plotBCV(dge)
+plotQLDisp(fit)
+hist(tt$table$PValue, 50)
+hist(tt$table$FDR, 50)
+plotSmear(qlf)
+
+df <- data.frame(pval = tt$table$PValue, padj = tt$table$FDR, logfc = tt$table$logFC, row.names = rownames(tt$table))
+
+```
+
+```{r}
+df <- read.csv("Data/Differntial Expression/degs.csv", row.names=1)
+
+```
+
+
+```{r fig.height=9, fig.width=8}
+EnhancedVolcano(df,
+    lab = rownames(df),
+    x = 'logfc',
+    y = 'padj',
+    selectLab = c('Areg','Il1rl1','Jund','Il1rn','Il2ra','Icos','Il17a','Gzmc','Gzmb','Tnfrsf4','Il13','Ctla4','Foxp3','Batf','Hspa1a','Hspa1b','Isg15','Dnaja1','Igfbp4','Ccr7','Tcf7','Lef1', 'Isg15','Tnfrsf9','Furin'),
+    pointSize = 1.5,
+    pCutoff = 10e-32,
+    FCcutoff = 0.5,
+    colAlpha = 1,
+    drawConnectors = TRUE,
+    typeConnectors = 'open',
+    gridlines.major = FALSE,
+    gridlines.minor = FALSE,
+    border = 'full',
+    labFace = 'italic', labSize=4)
+
+```
+
+
+```{r, fig.height=10, fig.width=9}
+#pdf(file="Graphs/Differntial Expression/volcano.pdf", width=10, height=9)
+
+EnhancedVolcano(df,
+    lab = rownames(df),
+    x = 'logfc',
+    y = 'padj',
+    selectLab = c('Areg','Il1rl1','Jund','Il1rn','Il2ra','Icos','Il17a','Gzmc','Gzmb','Tnfrsf4','Il13','Ctla4','Foxp3','Batf','Hspa1a','Hspa1b','Isg15','Dnaja1','Igfbp4','Ccr7','Tcf7','Lef1', 'Isg15','Tnfrsf9','Furin'),
+    pointSize = 1.5,
+    pCutoff = 10e-32,
+    FCcutoff = 0.5,
+    colAlpha = 1,
+    drawConnectors = FALSE,
+    typeConnectors = 'open',
+    gridlines.major = FALSE,
+    gridlines.minor = FALSE)
+
+
+#dev.off()
+
+```
+```{r}
+df$metric = (-log10(df$padj))/sign(df$logfc)
+
+```
+
+
+```{r}
+write.csv(df, "Data/Differntial Expression/degs.csv")
+
+gsea <- data.frame(logfc = df[df$padj<0.05,]$logfc, row.names = toupper(rownames(df[df$padj<0.05,])))
+write.table(gsea, "Data/Differntial Expression/gesa_preranked_filtered.rnk", sep='\t',quote=FALSE, col.names=FALSE)
+
+gsea <- data.frame(logfc = df$logfc, row.names = toupper(rownames(df)))
+write.table(gsea, "Data/Differntial Expression/gesa_preranked.rnk", sep='\t',quote=FALSE, col.names=FALSE)
+
+```
+
+ORA Pathway Analysis
+
+```{r}
+# Cluster profiler
+library(org.Mm.eg.db)
+library(clusterProfiler)
+library(DOSE)
+library(enrichplot)
+
+genes <- as.vector(na.omit(rownames(df[df$padj<0.05,])))
+
+background <- as.vector(rownames(df))
+
+foldchanges <- as.vector(na.omit(df[df$padj<0.05,]$logfc))
+
+names(foldchanges) <- genes
+
+```
+
+GO BP
+
+```{r}
+ego <- enrichGO(gene = genes, 
+                universe = background,
+                keyType = "SYMBOL",
+                OrgDb = org.Mm.eg.db, 
+                ont = "BP", 
+                pAdjustMethod = "BH", 
+                qvalueCutoff = 0.05, 
+                pvalueCutoff = 0.01,
+                readable = FALSE)
+                
+## Output results from GO analysis to a table
+cluster_summary <- data.frame(ego)
+
+#write.csv(cluster_summary, "tc Results/clusterProfiler_go_BP.csv")
+
+```
+
+```{r, fig.height=10, fig.width=15}
+barplot(ego, showCategory=40)
+dotplot(ego, showCategory=40)
+emapplot(ego, showCategory=40)
+
+```
+
+```{r, fig.height=20, fig.width=20}
+cnetplot(ego, 
+         categorySize="pvalue", 
+         showCategory = 40, 
+         foldChange=foldchanges,
+         vertex.label.font=6)
+
+```
+
+```{r, fig.height=10, fig.width=30}
+heatplot(ego, showCategory=40, foldChange=foldchanges)
+
+```
+
+```{r, fig.height=15, fig.width=30}
+goplot(ego, showCategory=10)
+
+```
+
+GO BP GSEA
+
+```{r}
+
+#foldchanges <- as.vector(na.omit(df$logfc))
+#names(foldchanges) <- rownames(df)
+
+```
+
+```{r}
+geneList <- sort(foldchanges, decreasing = TRUE)
+
+ego <- gseGO(geneList      = geneList,
+             OrgDb        = org.Mm.eg.db,
+             ont          = "BP",
+             pvalueCutoff = 0.05,
+             verbose      = FALSE,
+             keyType = "SYMBOL")
+
+
+## Output results from GO analysis to a table
+cluster_summary <- data.frame(ego)
+
+#write.csv(cluster_summary, "tc Results/clusterProfiler_go_BP_GSEA.csv")
+
+```
+```{r}
+#order
+ego@result <- ego@result[order(-ego@result$NES),]
+
+```
+
+```{r, fig.height=10, fig.width=15}
+#barplot(ego, showCategory=40)
+dotplot(ego, showCategory=40, color="pvalue")
+emapplot(ego, showCategory=40, color="pvalue")
+
+```
+
+```{r}
+pi=seq(0, 1, length.out=11)
+
+mutate(ego, pp = cut(pvalue, pi)) %>%
+  group_by(pp) %>% 
+  summarise(cnt = n()) %>% 
+  ggplot(aes(pp, cnt)) + geom_col() + 
+  theme_minimal() +
+  xlab("p value intervals") +
+  ylab("Frequency") + 
+  ggtitle("p value distribution")
+
+```
+
+```{r, fig.height=20, fig.width=20}
+cnetplot(ego, 
+         categorySize="pvalue", 
+         showCategory = 10, 
+         foldChange=foldchanges,
+         vertex.label.font=6)
+
+```
+
+```{r, fig.height=4, fig.width=40}
+heatplot(ego, showCategory=5, foldChange=foldchanges)
+
+```
+
+```{r, fig.height=10, fig.width=10}
+gseaplot2(ego, geneSetID = c(1, 2))
+
+```
+
+```{r, fig.height=10, fig.width=15}
+library(clusterProfiler.dplyr)
+
+y <- arrange(ego, -abs(NES)) %>% 
+        group_by(sign(NES))
+
+library(forcats)
+library(ggplot2)
+library(ggstance)
+library(enrichplot)
+
+ggplot(y, aes(NES, fct_reorder(Description, NES), fill=pvalue), showCategory=40) + 
+    geom_barh(stat='identity') + 
+    scale_fill_continuous(low='red', high='blue', guide=guide_colorbar(reverse=TRUE)) + 
+    theme_minimal() + ylab(NULL)
+
+```
+
+```{r, fig.height=15, fig.width=25}
+dotplot(ego, showCategory=40, split=".sign", color="pvalue") + facet_grid(.~.sign)
+
+```
+
+KeggPathway GSEA
+
+```{r}
+
+#foldchanges <- as.vector(na.omit(df$logfc))
+#names(foldchanges) <- rownames(df)
+
+geneSymbols <- mapIds(org.Mm.eg.db, keys=names(foldchanges), column="ENTREZID", keytype="SYMBOL")
+
+```
+
+```{r}
+geneList <- sort(foldchanges, decreasing = TRUE)
+names(geneList) <- geneSymbols[names(geneList)]
+
+ego <- gseKEGG(geneList = geneList,
+               organism  = "mmu",
+               pvalueCutoff = 0.05,
+               verbose = FALSE)
+
+## Output results from GO analysis to a table
+cluster_summary <- data.frame(ego)
+names(foldchanges) <- rownames(genes)
+
+write.csv(cluster_summary, "Data/Differntial Expression/clusterProfiler_KEGG_gsea.csv")
+
+```
+```{r}
+#order
+ego@result <- ego@result[order(-ego@result$NES),]
+
+```
+```{r, fig.height=10, fig.width=15}
+#barplot(ego, showCategory=40)
+dotplot(ego, showCategory=40, color="pvalue")
+emapplot(ego, showCategory=40, color="pvalue", pie_scale=1.5)
+
+```
+
+
+```{r, fig.height=20, fig.width=20}
+cnetplot(ego, 
+         categorySize="pvalue", 
+         showCategory = 10, 
+         foldChange=foldchanges,
+         vertex.label.font=6)
+
+```
+
+```{r, fig.height=5, fig.width=60}
+heatplot(ego, showCategory=5, foldChange=foldchanges)
+
+```
+
+```{r, fig.height=10, fig.width=10}
+gseaplot2(ego, geneSetID = 1:5)
+
+```
+
+```{r, fig.height=10, fig.width=15}
+library(clusterProfiler.dplyr)
+
+y <- arrange(ego, -abs(NES)) %>% 
+        group_by(sign(NES))
+
+library(forcats)
+library(ggplot2)
+library(ggstance)
+library(enrichplot)
+
+ggplot(y, aes(NES, fct_reorder(Description, NES), fill=pvalue), showCategory=10) + 
+    geom_barh(stat='identity') + 
+    scale_fill_continuous(low='red', high='blue', guide=guide_colorbar(reverse=TRUE)) + 
+    theme_minimal() + ylab(NULL)
+
+```
+
+```{r, fig.height=10, fig.width=15}
+dotplot(ego, showCategory=20, split=".sign", color="pvalue") + facet_grid(.~.sign)
+
+```
+
+```{r}
+library(pathview)
+
+pathview(gene.data  = geneList,
+         pathway.id = "mmu04657",
+         species = "mmu")
+
+pathview(gene.data  = geneList,
+         pathway.id = "mmu05200",
+         species = "mmu")
+
+pathview(gene.data  = geneList,
+         pathway.id = "mmu04668",
+         species = "mmu")
+
+pathview(gene.data  = geneList,
+         pathway.id = "mmu04659",
+         species = "mmu")
+
+```

@@ -1,0 +1,350 @@
+---
+title: "Survival Analysis TCGA Data"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+---
+
+```{r}
+knitr::opts_chunk$set(fig.path = "Graphs/All/")
+knitr::opts_chunk$set(eval = TRUE)
+knitr::opts_chunk$set(dev = c("pdf", "png"))
+
+```
+
+```{r}
+# Packages
+library(dplyr)
+library(Seurat)
+library(patchwork)
+library(readxl)
+library(data.table)
+
+#Load Data
+load("Data/Cells/tc.Robj")
+cd4 <- read.csv(file = "Data/Cells/CD4/cd4.clusters.csv")
+cd8 <- read.csv(file = "Data/Cells/CD8/cd8.clusters.csv")
+treg <- read.csv(file = "Data/Cells/Treg/treg.clusters.csv")
+
+anno <- rbind(cd4, cd8, treg)
+sub <- as.character(anno$x)
+names(sub) <- anno$X
+
+tc <- AddMetaData(tc, sub, "subclusters")
+Idents(tc) <- tc$subclusters
+
+rm(treg, cd4, cd8, anno)
+
+# Survival Data
+survival <- read.table("TCGA/Pancancer/GDC-PANCAN.survival.tsv", header=TRUE)
+tcga <- fread("TCGA/Pancancer/GDC-PANCAN.htseq_fpkm-uq.tsv", header=TRUE, data.table=FALSE)
+phenotype <- read.table("TCGA/Pancancer/GDC-PANCAN.basic_phenotype.tsv", header=TRUE, sep="\t",na.strings = c("NA",""," "),fill=TRUE,quote='', row.names = 1)
+gene_anno <- read.table("TCGA/gene_anno.probeMap", header=TRUE, sep="\t",na.strings = c("NA",""," "),fill=TRUE,quote='', row.names = 1)
+
+```
+
+```{r}
+#Datawrangling
+colnames(tcga) <- gsub("\\.", "-", colnames(tcga))
+rownames(tcga) <- tcga$xena_sample
+tcga$xena_sample <- NULL
+
+survival <- survival[!duplicated(survival$sample),]
+rownames(survival) <- survival$sample
+survival$sample <- NULL
+
+#Keep primary and remove duplicates
+phenotype <- phenotype[which(phenotype$sample_type == "Primary Tumor"),]
+
+```
+
+```{r}
+#Find intersecting samples
+samples <- Reduce(intersect, list(rownames(phenotype), colnames(tcga), rownames(survival)))
+
+phenotype <- phenotype[samples,]
+survival <- survival[samples,]
+tcga <- tcga[,samples]
+
+#Create phenotype table
+pheno <- data.frame(matrix(ncol = 0, nrow = length(rownames(phenotype))))
+pheno$age_at_diagnosis <- phenotype$Age.at.Diagnosis.in.Years
+pheno$gender <- trimws(phenotype$Gender)
+
+pheno$project <- phenotype$project_id
+
+pheno$os <- survival$OS
+pheno$os.time <- survival$OS.time
+
+rownames(pheno) <- rownames(phenotype)
+
+```
+
+```{r fig.height=7, fig.width=11}
+DimPlot(tc, reduction = "umap", label=TRUE) & NoAxes()
+
+```
+
+```{r}
+# find markers for every cluster compared to all remaining cells, report only the positive ones
+tc.markers <- FindAllMarkers(tc, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.5)
+tc.markers <- tc.markers[tc.markers$p_val_adj <= 0.05,]
+
+tc.markers %>% group_by(cluster) %>% top_n(n = 2, wt = avg_logFC)
+
+top3 <- tc.markers %>% group_by(cluster) %>% top_n(n = 3, wt = avg_logFC)
+DoHeatmap(tc, features = top3$gene) + NoLegend()
+
+top1 <- tc.markers %>% group_by(cluster) %>% top_n(n = 1, wt = avg_logFC)
+DoHeatmap(tc, features = top1$gene) + NoLegend()
+
+rm(top1, top3)
+
+```
+
+```{r}
+genes <- rownames(gene_anno)[which(gene_anno$gene %in% c(toupper(unique(tc.markers$gene)), c('IL33', 'TNFRSF9', 'CD163')))]
+tcga <- tcga[genes,]
+
+```
+
+```{r}
+gc()
+#Normalize TCGA RNA seq data
+tcga <- tcga[rowSums(tcga)>0,]
+#log2(tcga+1)
+tcga <- as.data.frame(t(scale(t(tcga))))
+
+```
+
+```{r}
+library(survival)
+library(survminer)
+library(gtools)
+
+#cleanup
+rm(cd4, cd8, treg, norm, raw, phenotype, anno)
+
+```
+
+```{r fig.height=6, fig.width=8}
+# Survival Analysis
+sub <- pheno
+table(sub$gender)
+
+fit <- survfit(Surv(os.time, os)~gender, data=sub)
+ggsurvplot(fit, data=sub, pval=T, conf.int = T)
+
+```
+
+```{r fig.height=10, fig.width=10}
+# Survival Analysis
+sub <- pheno
+
+table(sub$project)
+
+fit <- survfit(Surv(os.time, os)~project, data=sub)
+coxph(formula = Surv(os.time, os)~age_at_diagnosis+project+gender, data=sub)
+ggsurvplot(fit, data=sub, pval=T)
+
+```
+
+
+```{r}
+# logfc > 0.5 and p <0.05
+
+tc.markers <- FindAllMarkers(tc, only.pos = FALSE, min.pct = 0.25, logfc.threshold = 0.5)
+tc.markers <- tc.markers[tc.markers$p_val_adj <= 0.05,]
+
+tc.markers %>% group_by(cluster) %>% top_n(n = 2, wt = avg_logFC)
+
+top3 <- tc.markers %>% group_by(cluster) %>% top_n(n = 3, wt = avg_logFC)
+DoHeatmap(tc, features = top3$gene) + NoLegend()
+
+top1 <- tc.markers %>% group_by(cluster) %>% top_n(n = 1, wt = avg_logFC)
+DoHeatmap(tc, features = top1$gene) + NoLegend()
+
+rm(top1, top3)
+
+```
+
+```{r}
+pos_markers <- tc.markers[tc.markers$avg_logFC > 0,]
+neg_markers <- tc.markers[tc.markers$avg_logFC < 0,]
+
+```
+
+```{r fig.height=6, fig.width=6}
+# genetic signature
+# Survival Analysis with positive and negative genes only
+for (subcluster in unique(tc.markers$cluster)){
+  
+  sub <- pheno
+  
+  # Postiive
+  pos <- toupper(pos_markers$gene[which(pos_markers$cluster == subcluster)])
+  pos_genes <- rownames(gene_anno)[which(gene_anno$gene %in% pos)]
+  
+  # Negative
+  neg <- toupper(neg_markers$gene[which(neg_markers$cluster == subcluster)])
+  neg_genes <- rownames(gene_anno)[which(gene_anno$gene %in% neg)]
+  
+  # Sum
+  sub$gene_expression <- colSums(rbind(tcga[pos_genes,], -tcga[neg_genes,]), na.rm = T)
+  
+  sub$gene = ifelse(sub$gene_expression >= median(unlist(sub$gene_expression)), "up", "down")
+  table(sub$gene)
+  
+  print(paste(subcluster, "Positive: "))
+  print(pos)
+  print(paste(subcluster, "Negative: "))
+  print(neg)
+  
+  fit <- survfit(Surv(os.time, os)~gene, data=sub)
+  coxph(formula = Surv(os.time, os)~gene+age_at_diagnosis+project+gender, data=sub)
+  print(ggsurvplot(fit, data=sub, pval=T, conf.int = T, risk.table.height=0.25, title=subcluster))
+  
+}
+
+
+```
+
+```{r fig.height=6, fig.width=6}
+# genetic signature
+# Survival Analysis with positive genes only
+for (subcluster in unique(pos_markers$cluster)){
+  
+  sub <- pheno
+  
+  # Postiive
+  pos <- toupper(pos_markers$gene[which(pos_markers$cluster == subcluster)])
+  pos_genes <- rownames(gene_anno)[which(gene_anno$gene %in% pos)]
+  
+  # Sum
+  sub$gene_expression <- colSums(tcga[pos_genes,], na.rm = T)
+  
+  sub$gene = ifelse(sub$gene_expression >= median(unlist(sub$gene_expression)), "up", "down")
+  table(sub$gene)
+  
+  print(paste(subcluster, "Positive: "))
+  print(pos)
+  
+  fit <- survfit(Surv(os.time, os)~gene, data=sub)
+  coxph(formula = Surv(os.time, os)~gene+age_at_diagnosis+project+gender, data=sub)
+  print(ggsurvplot(fit, data=sub, pval=T, conf.int = T, risk.table.height=0.25, title=subcluster))
+  
+}
+
+
+```
+
+```{r}
+# logfc >= 0.75 and p <= 1e-10
+
+tc.markers <- FindAllMarkers(tc, only.pos = FALSE, min.pct = 0.25, logfc.threshold = 0.75)
+tc.markers <- tc.markers[tc.markers$p_val_adj <= 1e-10,]
+
+tc.markers %>% group_by(cluster) %>% top_n(n = 2, wt = avg_logFC)
+
+top3 <- tc.markers %>% group_by(cluster) %>% top_n(n = 3, wt = avg_logFC)
+DoHeatmap(tc, features = top3$gene) + NoLegend()
+
+top1 <- tc.markers %>% group_by(cluster) %>% top_n(n = 1, wt = avg_logFC)
+DoHeatmap(tc, features = top1$gene) + NoLegend()
+
+rm(top1, top3)
+
+```
+
+```{r}
+pos_markers <- tc.markers[tc.markers$avg_logFC > 0,]
+neg_markers <- tc.markers[tc.markers$avg_logFC < 0,]
+
+```
+
+```{r fig.height=6, fig.width=6}
+# genetic signature
+# Survival Analysis with positive and negative genes only
+for (subcluster in unique(tc.markers$cluster)){
+  
+  sub <- pheno
+  
+  # Postiive
+  pos <- toupper(pos_markers$gene[which(pos_markers$cluster == subcluster)])
+  pos_genes <- rownames(gene_anno)[which(gene_anno$gene %in% pos)]
+  
+  # Negative
+  neg <- toupper(neg_markers$gene[which(neg_markers$cluster == subcluster)])
+  neg_genes <- rownames(gene_anno)[which(gene_anno$gene %in% neg)]
+  
+  # Sum
+  sub$gene_expression <- colSums(rbind(tcga[pos_genes,], -tcga[neg_genes,]), na.rm = T)
+  
+  sub$gene = ifelse(sub$gene_expression >= median(unlist(sub$gene_expression)), "up", "down")
+  table(sub$gene)
+  
+  print(paste(subcluster, "Positive: "))
+  print(pos)
+  print(paste(subcluster, "Negative: "))
+  print(neg)
+  
+  fit <- survfit(Surv(os.time, os)~gene, data=sub)
+  coxph(formula = Surv(os.time, os)~gene+age_at_diagnosis+project+gender, data=sub)
+  print(ggsurvplot(fit, data=sub, pval=T, conf.int = T, risk.table.height=0.25, title=subcluster))
+  
+}
+
+
+```
+```{r fig.height=6, fig.width=6}
+# genetic signature
+# Survival Analysis with positive genes only
+for (subcluster in unique(pos_markers$cluster)){
+  
+  sub <- pheno
+  
+  # Postiive
+  pos <- toupper(pos_markers$gene[which(pos_markers$cluster == subcluster)])
+  pos_genes <- rownames(gene_anno)[which(gene_anno$gene %in% pos)]
+  
+  # Sum
+  sub$gene_expression <- colSums(tcga[pos_genes,], na.rm = T)
+  
+  sub$gene = ifelse(sub$gene_expression >= median(unlist(sub$gene_expression)), "up", "down")
+  table(sub$gene)
+  
+  print(paste(subcluster, "Positive: "))
+  print(pos)
+  
+  fit <- survfit(Surv(os.time, os)~gene, data=sub)
+  coxph(formula = Surv(os.time, os)~gene+age_at_diagnosis+project+gender, data=sub)
+  print(ggsurvplot(fit, data=sub, pval=T, conf.int = T, risk.table.height=0.25, title=subcluster))
+  
+}
+
+
+```
+
+
+```{r fig.height=6, fig.width=6}
+
+for (gene in c('IL33', 'TNFRSF9', 'CD163')){
+
+  # Survival Analysis for genes
+  sub <- pheno
+  genes <- rownames(gene_anno)[which(gene_anno$gene %in% gene)]
+  sub$gene_expression <- colSums(tcga[genes,])
+  
+  sub$gene = quantcut(sub$gene_expression, q=4, labels=c('low', 'medium', 'medium', 'high'))
+  table(sub$gene)
+  
+  sub[which(sub$gene == "medium"), "gene"] = NA
+
+  fit <- survfit(Surv(os.time, os)~gene, data=sub)
+  coxph(formula = Surv(os.time, os)~gene+age_at_diagnosis+project+gender, data=sub)
+  print(ggsurvplot(fit, data=sub, pval=T, conf.int = T, risk.table.height=0.25, title=gene))
+
+}
+
+```

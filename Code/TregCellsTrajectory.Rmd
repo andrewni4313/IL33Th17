@@ -1,0 +1,443 @@
+---
+title: "Treg Trajectory Analysis"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+---
+
+```{r}
+knitr::opts_chunk$set(fig.path = "Graphs/Treg/")
+knitr::opts_chunk$set(eval = TRUE)
+knitr::opts_chunk$set(dev = c("pdf", "png"))
+
+```
+
+```{r}
+# Packages
+library(dplyr)
+library(Seurat)
+library(patchwork)
+library(readxl)
+
+#Load Data
+load("Data/Cells/Treg/tc.Treg.Robj")
+
+```
+# Trajectory Analysis
+
+```{r}
+# Package
+library(slingshot)
+library(scales)
+
+# Load Data
+sds <- slingshot(Embeddings(tc.Treg, "umap"), clusterLabels = tc.Treg$seurat_clusters, 
+                 start.clus = 4, stretch = 0)
+
+```
+
+```{r}
+# Assign a color to each cell based on some value
+cell_pal <- function(cell_vars, pal_fun,...) {
+  if (is.numeric(cell_vars)) {
+    pal <- pal_fun(100, ...)
+    return(pal[cut(cell_vars, breaks = 100)])
+  } else {
+    categories <- sort(unique(cell_vars))
+    pal <- setNames(pal_fun(length(categories), ...), categories)
+    return(pal[cell_vars])
+  }
+}
+
+cell_colors_clust <- cell_pal(tc.Treg$tregtype, hue_pal())
+cell_colors_tumor <- cell_pal(tc.Treg$tumor, hue_pal())
+
+```
+
+```{r}
+# Inferred Trajectory - Slingshot
+plot(reducedDim(sds), col = cell_colors_clust, pch = 20, cex = 0.5)
+lines(sds, lwd = 2, type = 'lineages', col = 'black')
+
+plot(reducedDim(sds), col = cell_colors_clust, pch = 20, cex = 0.5)
+lines(sds, lwd = 2, col = 'black')
+
+plot(reducedDim(sds), col = cell_colors_tumor, pch = 20, cex = 0.5)
+lines(sds, lwd = 2, type = 'lineages', col = 'black')
+
+plot(reducedDim(sds), col = cell_colors_tumor, pch = 20, cex = 0.5)
+lines(sds, lwd = 2, col = 'black')
+
+```
+```{r fig.width=10, fig.height=4}
+library(viridis)
+
+nc <- 3
+pt <- slingPseudotime(sds)
+nms <- colnames(pt)
+nr <- ceiling(length(nms)/nc)
+pal <- viridis(100, end = 0.95)
+par(mfrow = c(nr, nc))
+for (i in nms) {
+  colors <- pal[cut(pt[,i], breaks = 100)]
+  plot(reducedDim(sds), col = colors, pch = 16, cex = 0.5, main = i)
+  lines(sds, lwd = 2, col = 'black', type = 'lineages')
+}
+
+rm(nc, pt, nms, nr, pal)
+
+```
+
+
+
+```{r}
+# Package
+library(monocle3)
+
+# Load data from Seurat
+# part one, gene annotations
+gene_annotation <- as.data.frame(rownames(tc.Treg@reductions[["pca"]]@feature.loadings), row.names = rownames(tc.Treg@reductions[["pca"]]@feature.loadings))
+colnames(gene_annotation) <- "gene_short_name"
+
+# part two, cell information
+cell_metadata <- as.data.frame(tc.Treg@assays[["RNA"]]@counts@Dimnames[[2]], row.names = tc.Treg@assays[["RNA"]]@counts@Dimnames[[2]])
+colnames(cell_metadata) <- "barcode"
+
+# part three, counts sparse matrix
+New_matrix <- tc.Treg@assays[["RNA"]]@counts
+New_matrix <- New_matrix[rownames(tc.Treg@reductions[["pca"]]@feature.loadings), ]
+expression_matrix <- New_matrix
+
+
+### Construct the basic cds object
+cds <- new_cell_data_set(expression_matrix,
+                                     cell_metadata = cell_metadata,
+                                     gene_metadata = gene_annotation)
+
+rm(cell_metadata, expression_matrix, gene_annotation, New_matrix)  # Cleanup
+
+```
+
+```{r}
+# Preprocess
+cds <- preprocess_cds(cds, num_dim = 100)
+
+```
+
+```{r}
+# Reduce Dimensionality
+cds <- reduce_dimension(cds)
+
+```
+
+```{r}
+# Cluster Cells
+cds <- cluster_cells(cds)
+plot_cells(cds, color_cells_by = "partition")
+plot_cells(cds, color_cells_by = "cluster")
+
+```
+
+```{r message=FALSE, warning=FALSE}
+# Inferrred Cell Trajectory Monocle 3
+cds <- learn_graph(cds)
+plot_cells(cds,
+           color_cells_by = "cluster",
+           label_groups_by_cluster=TRUE,
+           label_leaves=TRUE,
+           label_branch_points=TRUE)
+```
+
+
+```{r message = FALSE, warning = FALSE}
+# Replace with Seurat Data
+# Assign the cluster info
+list_cluster <- tc.Treg@meta.data[[sprintf("tregtype")]]
+names(list_cluster) <- tc.Treg@assays[["RNA"]]@data@Dimnames[[2]]
+cds@clusters@listData[["UMAP"]][["clusters"]] <- list_cluster
+
+rm(list_cluster)  # Cleanup
+
+pData(cds)$cellType <- tc.Treg@meta.data$cellType
+
+```
+
+```{r message=FALSE, warning=FALSE}
+# Inferrred Cell Trajectory Monocle 3
+cds <- learn_graph(cds)
+plot_cells(cds,
+           color_cells_by = "cluster",
+           label_groups_by_cluster=TRUE,
+           label_leaves=TRUE,
+           label_branch_points=TRUE)
+```
+
+```{r message = FALSE, warning = FALSE}
+# Assign UMAP coordinate
+cds@reduce_dim_aux@listData[["UMAP"]] <- tc.Treg@reductions[["umap"]]@cell.embeddings
+cds@int_colData@listData[["reducedDims"]]@listData[["UMAP"]] <- tc.Treg@reductions[["umap"]]@cell.embeddings
+
+
+cds <- cluster_cells(cds) # Get partition info
+
+# Assign the cluster info
+list_cluster <- tc.Treg@meta.data[[sprintf("tregtype")]]
+names(list_cluster) <- tc.Treg@assays[["RNA"]]@data@Dimnames[[2]]
+cds@clusters@listData[["UMAP"]][["clusters"]] <- list_cluster
+
+rm(list_cluster)  # Cleanup
+
+# Assign feature loading for downstream module analysis
+cds@preprocess_aux$gene_loadings <- tc.Treg@reductions[["pca"]]@feature.loadings
+
+```
+
+
+```{r message=FALSE, warning=FALSE}
+# Inferrred Cell Trajectory Monocle 3
+cds <- learn_graph(cds)
+plot_cells(cds,
+           color_cells_by = "cluster",
+           label_groups_by_cluster=TRUE,
+           label_leaves=TRUE,
+           label_branch_points=TRUE)
+```
+
+```{r}
+# Import Function for monolce 2
+newimport <- function(otherCDS, import_all = FALSE) {
+ if(class(otherCDS)[1] == 'Seurat') {
+  requireNamespace("Seurat")
+  data <- otherCDS@assays$RNA@counts
+  
+  if(class(data) == "data.frame") {
+   data <- as(as.matrix(data), "sparseMatrix")
+  }
+  
+  pd <- tryCatch( {
+   pd <- new("AnnotatedDataFrame", data = otherCDS@meta.data)
+   pd
+  },
+  #warning = function(w) { },
+  error = function(e) {
+   pData <- data.frame(cell_id = colnames(data), row.names = colnames(data))
+   pd <- new("AnnotatedDataFrame", data = pData)
+   
+   message("This Seurat object doesn't provide any meta data");
+   pd
+  })
+  
+  # remove filtered cells from Seurat
+  if(length(setdiff(colnames(data), rownames(pd))) > 0) {
+   data <- data[, rownames(pd)]
+  }
+  
+  fData <- data.frame(gene_short_name = row.names(data), row.names = row.names(data))
+  fd <- new("AnnotatedDataFrame", data = fData)
+  lowerDetectionLimit <- 0
+  
+  if(all(data == floor(data))) {
+   expressionFamily <- negbinomial.size()
+  } else if(any(data < 0)){
+   expressionFamily <- uninormal()
+  } else {
+   expressionFamily <- tobit()
+  }
+  
+  valid_data <- data[, row.names(pd)]
+  
+  monocle_cds <- newCellDataSet(data,
+                                phenoData = pd,
+                                featureData = fd,
+                                lowerDetectionLimit=lowerDetectionLimit,
+                                expressionFamily=expressionFamily)
+  
+  if(import_all) {
+   if("Monocle" %in% names(otherCDS@misc)) {
+    otherCDS@misc$Monocle@auxClusteringData$seurat <- NULL
+    otherCDS@misc$Monocle@auxClusteringData$scran <- NULL
+    
+    monocle_cds <- otherCDS@misc$Monocle
+    mist_list <- otherCDS
+    
+   } else {
+    # mist_list <- list(ident = ident)
+    mist_list <- otherCDS
+   }
+  } else {
+   mist_list <- list()
+  }
+  
+  if(1==1) {
+   var.genes <- setOrderingFilter(monocle_cds, otherCDS@assays$RNA@var.features)
+   
+  }
+  monocle_cds@auxClusteringData$seurat <- mist_list
+  
+ } else if (class(otherCDS)[1] == 'SCESet') {
+  requireNamespace("scater")
+  
+  message('Converting the exprs data in log scale back to original scale ...')
+  data <- 2^otherCDS@assayData$exprs - otherCDS@logExprsOffset
+  
+  fd <- otherCDS@featureData
+  pd <- otherCDS@phenoData
+  experimentData = otherCDS@experimentData
+  if("is.expr" %in% slotNames(otherCDS))
+   lowerDetectionLimit <- otherCDS@is.expr
+  else
+   lowerDetectionLimit <- 1
+  
+  if(all(data == floor(data))) {
+   expressionFamily <- negbinomial.size()
+  } else if(any(data < 0)){
+   expressionFamily <- uninormal()
+  } else {
+   expressionFamily <- tobit()
+  }
+  
+  if(import_all) {
+   # mist_list <- list(iotherCDS@sc3,
+   #                   otherCDS@reducedDimension)
+   mist_list <- otherCDS
+   
+  } else {
+   mist_list <- list()
+  }
+  
+  monocle_cds <- newCellDataSet(data,
+                                phenoData = pd,
+                                featureData = fd,
+                                lowerDetectionLimit=lowerDetectionLimit,
+                                expressionFamily=expressionFamily)
+  # monocle_cds@auxClusteringData$sc3 <- otherCDS@sc3
+  # monocle_cds@auxOrderingData$scran <- mist_list
+  
+  monocle_cds@auxOrderingData$scran <- mist_list
+  
+ } else {
+  stop('the object type you want to export to is not supported yet')
+ }
+ 
+ return(monocle_cds)
+}
+```
+
+```{r}
+# Package
+# detach("package:monocle3", unload=TRUE)
+library(monocle)
+
+# Load Data
+cd <- newimport(tc.Treg)
+
+```
+
+```{r}
+# Choose genes
+cd <- estimateSizeFactors(cd)
+cd <- estimateDispersions(cd)
+disp_table <- dispersionTable(cd)
+
+ordering_genes <- FindAllMarkers(tc.Treg, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.5)
+ordering_genes <- ordering_genes[ordering_genes$p_val_adj <= 0.05,]
+ordering_genes <- rownames(ordering_genes)
+
+cd <- setOrderingFilter(cd, ordering_genes)
+plot_ordering_genes(cd)
+
+rm(disp_table)  # Cleanup
+
+```
+
+
+```{r message = FALSE, warning = FALSE}
+# Infer Trajectory
+cd <- reduceDimension(cd, max_components = 2,
+    method = 'DDRTree', sigma = 0.001)
+
+cd <- orderCells(cd)
+plot_cell_trajectory(cd, color_by = "State")
+plot_cell_trajectory(cd, color_by = "tregtype")
+
+```
+
+```{r}
+cd <- orderCells(cd, root_state=1)
+plot_cell_trajectory(cd, color_by = "tregtype")
+
+```
+
+```{r}
+plot_cell_trajectory(cd, color_by = "Pseudotime")
+plot_cell_trajectory(cd, color_by = "tregtype")
+plot_cell_trajectory(cd, color_by = "tumor")
+plot_cell_trajectory(cd, color_by = "clonosize")
+
+```
+
+```{r}
+pseudotime_de <- differentialGeneTest(cd, fullModelFormulaStr = "~sm.ns(Pseudotime)", cores = 4)
+pseudotime_de <- pseudotime_de %>% arrange(qval)
+head(pseudotime_de)
+
+```
+
+```{r}
+plot_genes_in_pseudotime(cd[head(pseudotime_de)$gene_short_name,])
+plot_genes_in_pseudotime(cd[head(pseudotime_de)$gene_short_name,], color_by = "tregtype")
+
+```
+```{r error=TRUE}
+plot(plot_pseudotime_heatmap(cd[head(pseudotime_de, 50)$gene_short_name,], num_clusters = 3, cores = 1, show_rownames = T, return_heatmap = F))
+
+```
+
+```{r}
+BEAM_res <- BEAM(cd, branch_point = 1, cores = 4)
+BEAM_res <- BEAM_res[order(BEAM_res$qval),]
+BEAM_res <- BEAM_res[,c("gene_short_name", "pval", "qval")]
+
+```
+```{r}
+plot_genes_branched_pseudotime(cd[head(BEAM_res)$gene_short_name,], branch_point = 1)
+plot_genes_branched_pseudotime(cd[head(BEAM_res)$gene_short_name,], branch_point = 1, color_by = "tregtype")
+
+```
+
+```{r error=TRUE}
+plot(plot_genes_branched_heatmap(cd[head(BEAM_res, 50)$gene_short_name,], branch_point = 1, num_clusters = 3, cores = 1, show_rownames = T))
+
+```
+
+
+```{r}
+library(ggbeeswarm)
+library(ggthemes)
+
+pca_time <- data.frame(x = tc.Treg@reductions[["pca"]]@cell.embeddings[,1], y = tc.Treg$tregtype, colour = tc.Treg$tregtype)
+
+ggplot(pca_time, aes(x=x, y=y, colour=colour)) +
+    geom_quasirandom(groupOnX = FALSE) + theme_classic() +
+    xlab("PC1") + ylab("Cluster") +
+    ggtitle("Cells ordered by first principal component")
+
+```
+```{r}
+BEAM_res2 <- BEAM(cd, branch_point = 2, cores = 4)
+BEAM_res2 <- BEAM_res2[order(BEAM_res2$qval),]
+BEAM_res2 <- BEAM_res2[,c("gene_short_name", "pval", "qval")]
+
+```
+
+
+```{r}
+save(cd,file="Data/Cells/Treg/cd.Robj")
+save(BEAM_res,file="Data/Cells/Treg/BEAM_res.Robj")
+save(BEAM_res2,file="Data/Cells/Treg/BEAM_res2.Robj")
+
+save(pseudotime_de,file="Data/Cells/Treg/pseudotime_de.Robj")
+
+```
+

@@ -1,0 +1,296 @@
+---
+title: "CD4 cell map clusters from original"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+---
+
+```{r}
+knitr::opts_chunk$set(fig.path = "Graphs/Lung CD4/Mapping/")
+knitr::opts_chunk$set(eval = TRUE)
+knitr::opts_chunk$set(dev = c("pdf", "png"))
+
+```
+
+
+```{r}
+# Packages
+library(dplyr)
+library(Seurat)
+library(patchwork)
+library(tidyverse)
+library(pheatmap)
+library(readxl)
+
+# Load Data
+load("Data/Cells/CD4/tc.cd4.Robj")
+load("Data/Cells/Lung CD4/tc.cd4.lung.Robj")
+
+tc.cd4.orig <- tc.cd4
+rm(tc.cd4)
+
+immune_genes <- read_excel("Data/ImmuneGenes.xlsx")
+immune_genes <- immune_genes[['A2M']]
+
+# Convert Strings
+capitalize <- function(x) {
+  x <- tolower(x)
+  substr(x, 1, 1) <- toupper(substr(x, 1, 1))
+  x
+}
+
+immune_genes <- capitalize(immune_genes)
+immune_genes <- unique(immune_genes)
+
+```
+
+Integration
+
+```{r}
+anchors <- FindIntegrationAnchors(object.list = c(tc.cd4.lung, tc.cd4.orig), dims = 1:50)
+tc.cd4.integrated <- IntegrateData(anchorset = anchors, dims = 1:50)
+
+```
+
+```{r}
+#Scale Data
+all.genes <- rownames(tc.cd4.integrated)
+tc.cd4.integrated <- ScaleData(tc.cd4.integrated, features = all.genes)
+
+rm(all.genes) #cleanup
+
+```
+
+
+```{r}
+#Linear Dimensional Reduction
+tc.cd4.integrated <- RunPCA(tc.cd4.integrated, features = VariableFeatures(object = tc.cd4.integrated))
+print(tc.cd4.integrated[["pca"]], dims = 1:5, nfeatures = 5)
+VizDimLoadings(tc.cd4.integrated, dims = 1:2, reduction = "pca")
+DimPlot(tc.cd4.integrated, reduction = "pca")
+DimHeatmap(tc.cd4.integrated, dims = 1, cells = 500, balanced = TRUE)
+DimHeatmap(tc.cd4.integrated, dims = 1:15, cells = 500, balanced = TRUE)
+
+```
+
+
+```{r}
+#Determine dimensionality
+tc.cd4.integrated <- JackStraw(tc.cd4.integrated, num.replicate = 100)
+tc.cd4.integrated <- ScoreJackStraw(tc.cd4.integrated, dims = 1:20)
+JackStrawPlot(tc.cd4.integrated, dims = 1:15)
+ElbowPlot(tc.cd4.integrated)
+
+```
+
+```{r}
+# Dimension reduction UMAP
+tc.cd4.integrated <- RunUMAP(tc.cd4.integrated, dims = 1:50, umap.method = "umap-learn")
+DimPlot(tc.cd4.integrated, reduction = "umap", label=TRUE) & NoAxes()
+DimPlot(tc.cd4.integrated, reduction = "umap", group.by = "cellTypeGene", label=TRUE) & NoAxes()
+
+```
+
+```{r}
+# Maintain global clustering
+# tc.cd4.integrated$global_clusters <- factor(subset(tc.cd4.integrated, subset = cellTypeGene == "CD4-C4-Fosb")$cellTypeGene)
+# tc.cd4.integrated$global_clusters <- revalue(tc.cd4.integrated$global_clusters, c("CD4-C4-Fosb"="5"))
+
+```
+
+```{r}
+# Cluster cells
+tc.cd4.integrated <- FindNeighbors(tc.cd4.integrated, dims = 1:50)
+tc.cd4.integrated <- FindClusters(tc.cd4.integrated, resolution = 1.3)
+head(Idents(tc.cd4.integrated), 5)
+
+```
+
+```{r}
+# Dimension reduction UMAP
+tc.cd4.integrated@reductions[["umap"]] <- NULL
+
+tc.cd4.integrated <- RunUMAP(tc.cd4.integrated, dims = 1:50, umap.method = "umap-learn", reduction.name = "umap")
+
+DimPlot(tc.cd4.integrated, reduction = "umap", label=TRUE) & NoAxes()
+
+```
+```{r}
+# Cell Types
+VlnPlot(tc.cd4.integrated, features = c("Cd4"), slot = "counts", log = TRUE, sort = FALSE)
+VlnPlot(tc.cd4.integrated, features = c("Cd8a"), slot = "counts", log = TRUE, sort = FALSE)
+VlnPlot(tc.cd4.integrated, features = c("Foxp3"), slot = "counts", log = TRUE, sort = FALSE)
+VlnPlot(tc.cd4.integrated, features = c("Il2ra"), slot = "counts", log = TRUE, sort = FALSE)
+
+```
+
+```{r}
+# Cell Types
+VlnPlot(tc.cd4.integrated, features = c("Cd4"), log = TRUE, sort = FALSE)
+VlnPlot(tc.cd4.integrated, features = c("Cd8a"), log = TRUE, sort = FALSE)
+VlnPlot(tc.cd4.integrated, features = c("Foxp3"), log = TRUE, sort = FALSE)
+VlnPlot(tc.cd4.integrated, features = c("Il2ra"), log = TRUE, sort = FALSE)
+
+```
+
+```{r}
+# find markers for every cluster compared to all remaining cells, report only the positive ones
+tc.cd4.integrated.markers <- FindAllMarkers(tc.cd4.integrated, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
+tc.cd4.integrated.markers %>% group_by(cluster) %>% top_n(n = 2, wt = avg_logFC)
+
+top3 <- tc.cd4.integrated.markers %>% group_by(cluster) %>% top_n(n = 3, wt = avg_logFC)
+DoHeatmap(tc.cd4.integrated, features = top3$gene) + NoLegend()
+
+top1 <- tc.cd4.integrated.markers %>% group_by(cluster) %>% top_n(n = 1, wt = avg_logFC)
+DoHeatmap(tc.cd4.integrated, features = top1$gene) + NoLegend()
+
+```
+
+```{r}
+# Assign cell type to clusters
+new.cluster.ids <- c(0, 1, 2, 3, 4, 5)
+new.cluster.ids <- c("CD4-Nkg7", "CD4-Igfbp4", "CD4-Hspa1a", "CD4-Ramp3", "CD4-Tmem176b", "CD4-Ccl5")
+
+names(new.cluster.ids) <- levels(tc.cd4.integrated)
+tc.cd4.integrated <- RenameIdents(tc.cd4.integrated, new.cluster.ids)
+
+tc.cd4.integrated$cellTypeGene <- Idents(tc.cd4.integrated)
+
+Idents(tc.cd4.integrated) <- tc.cd4.integrated$cellTypeGene
+
+
+new.cluster.ids <- c("Th1", "ThNaive", "THea", "ThEx", "Th17", "ThCyto")
+
+names(new.cluster.ids) <- levels(tc.cd4.integrated)
+tc.cd4.integrated <- RenameIdents(tc.cd4.integrated, new.cluster.ids)
+
+tc.cd4.integrated$cd4type <- Idents(tc.cd4.integrated)
+
+Idents(tc.cd4.integrated) <- tc.cd4.integrated$cd4type
+
+tc.cd4.integrated$sorted_type = as.factor(paste(tc.cd4.integrated$cellTypeGene, "_", tc.cd4.integrated$cell.id.sorted))
+
+tc.cd4.integrated$assigned_type = as.factor(paste(tc.cd4.integrated$cellTypeGene, "_", tc.cd4.integrated$cell.id.assigned))
+
+rm(new.cluster.ids) # Cleanup
+
+```
+
+```{r}
+# Cell Types
+VlnPlot(tc.cd4.integrated, features = c("Cd4"), slot = "counts", log = TRUE, sort = FALSE)
+VlnPlot(tc.cd4.integrated, features = c("Cd8a"), slot = "counts", log = TRUE, sort = FALSE)
+VlnPlot(tc.cd4.integrated, features = c("Foxp3"), slot = "counts", log = TRUE, sort = FALSE)
+VlnPlot(tc.cd4.integrated, features = c("Il2ra"), slot = "counts", log = TRUE, sort = FALSE)
+
+```
+
+```{r}
+# Dimension reduction UMAP
+DimPlot(tc.cd4.integrated, reduction = "umap", label = TRUE) & NoAxes()
+DimPlot(tc.cd4.integrated, reduction = "umap", group.by = "cellTypeGene", label = TRUE) & NoAxes()
+
+```
+
+```{r}
+# Averages
+cluster.averages <- AverageExpression(subset(tc.cd4.integrated, features = immune_genes))
+cluster.averages <- as.matrix.data.frame(cluster.averages[["integrated"]])
+cluster.averages <- t(scale(t(cluster.averages)))
+cluster.averages <- cluster.averages[complete.cases(cluster.averages),]
+
+```
+
+```{r}
+# Heatmap
+library(RColorBrewer)
+library(knitr)
+library(scales)
+library(pheatmap)
+library(ggplot2)
+  
+immune_genes <- intersect(tc.cd4.integrated@assays[["integrated"]]@data@Dimnames[[1]], immune_genes)
+
+  
+colors <- hue_pal()(length(levels(tc.cd4.integrated@meta.data[["cellTypeGene"]])))
+names(colors) <- levels(tc.cd4.integrated@meta.data[["cellTypeGene"]])
+
+annotations <- data.frame(Cluster = colnames(cluster.averages))
+rownames(annotations) <- colnames(cluster.averages)
+
+mat_colors <- as.list(colors)
+
+heatmap <- pheatmap(cluster.averages,
+         cellwidth = 30, cellheight = 30,
+         annotation_colors = mat_colors,
+         annotation_col = annotations,
+         border=NA, display_numbers = F,
+         filename="Graphs/Lung CD4/heatmap.pdf")
+
+genes_hierarchial <- heatmap[["tree_row"]][["labels"]][heatmap[["tree_row"]][["order"]]]
+order_hierarchial <- heatmap[["tree_col"]][["labels"]][heatmap[["tree_col"]][["order"]]]
+Idents(tc.cd4.integrated) <- factor(Idents(tc.cd4.integrated), levels=order_hierarchial)
+  
+plot <- DotPlot(tc.cd4.integrated, features = genes_hierarchial, cols = "RdYlBu") + coord_flip() + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+ggplot2::ggsave(filename = "Graphs/Lung CD4/dotplot.pdf", plot = plot, width = length(order_hierarchial), height = length(genes_hierarchial)/4, limitsize = FALSE)
+
+rm(plot, heatmap)
+
+```
+
+```{r}
+# Package
+library(slingshot)
+library(scales)
+
+# Load Data
+sds <- slingshot(Embeddings(tc.cd4.integrated, "umap"), clusterLabels = tc.cd4.integrated$seurat_clusters, 
+                 start.clus = 4, stretch = 0)
+
+```
+
+```{r}
+# Assign a color to each cell based on some value
+cell_pal <- function(cell_vars, pal_fun,...) {
+  if (is.numeric(cell_vars)) {
+    pal <- pal_fun(100, ...)
+    return(pal[cut(cell_vars, breaks = 100)])
+  } else {
+    categories <- sort(unique(cell_vars))
+    pal <- setNames(pal_fun(length(categories), ...), categories)
+    return(pal[cell_vars])
+  }
+}
+
+cell_colors_clust <- cell_pal(tc.cd4.integrated$cellTypeGene, hue_pal())
+
+```
+
+```{r}
+# Inferred Trajectory - Slingshot
+plot(reducedDim(sds), col = cell_colors_clust, pch = 20, cex = 0.5)
+lines(sds, lwd = 2, type = 'lineages', col = 'black')
+
+plot(reducedDim(sds), col = cell_colors_clust, pch = 20, cex = 0.5)
+lines(sds, lwd = 2, col = 'black')
+
+```
+
+#Mapping Clusters
+
+```{r}
+# Cell type classification
+anchors <- FindTransferAnchors(reference = tc.cd4.orig, query = tc.cd4.lung, npcs = 50, dims = 1:50)
+predictions <- TransferData(anchorset = anchors, refdata = tc.cd4.orig$cd4type, dims = 1:50)
+tc.cd4.lung <- AddMetaData(tc.cd4.lung, metadata = predictions)
+
+DimPlot(tc.cd4.lung, reduction = "umap", group.by = "predicted.id") & NoAxes()
+
+```
+
+```{r}
+save(tc.cd4.integrated,file="Data/Cells/Lung CD4/tc.cd4.integrated.Robj")
+
+```
+

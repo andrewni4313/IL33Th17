@@ -1,0 +1,265 @@
+---
+title: "B16-IL33 CD8 cells SCRNA-Seq Analysis"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+---
+
+```{r}
+knitr::opts_chunk$set(fig.path = "Graphs/CD8/")
+knitr::opts_chunk$set(eval = TRUE)
+knitr::opts_chunk$set(dev = c("pdf", "png"))
+
+```
+
+# scRNA Analysis
+
+```{r}
+# Packages
+library(dplyr)
+library(plyr)
+library(Seurat)
+library(patchwork)
+library(readxl)
+
+# Load Data
+data_dir <- 'Data/filtered_feature_bc_matrix_1'
+load("Data/Cells/tc.Robj")
+tc.cd8 <- subset(tc, subset = cellType == "CD8")
+
+immune_genes <- read_excel("Data/ImmuneGenes.xlsx")
+immune_genes <- immune_genes[['A2M']]
+
+# Convert Strings
+capitalize <- function(x) {
+  x <- tolower(x)
+  substr(x, 1, 1) <- toupper(substr(x, 1, 1))
+  x
+}
+
+immune_genes <- capitalize(immune_genes)
+immune_genes <- unique(immune_genes)
+
+rm(tc)
+
+```
+
+```{r}
+#Feature Selection
+tc.cd8 <- FindVariableFeatures(tc.cd8, selection.method = "vst", nfeatures = 2000)
+
+# Identify the 10 most highly variable genes
+top10 <- head(VariableFeatures(tc.cd8), 10)
+
+# plot variable features with and without labels
+plot1 <- VariableFeaturePlot(tc.cd8)
+plot2 <- LabelPoints(plot = plot1, points = top10, repel = TRUE)
+plot1 + plot2
+rm(plot1, plot2, top10)
+
+```
+
+```{r}
+#Scale Data
+all.genes <- rownames(tc.cd8)
+tc.cd8 <- ScaleData(tc.cd8, features = all.genes)
+
+rm(all.genes) #cleanup
+
+```
+
+```{r}
+# #Cell Annotation/Clonotype Information
+# tcr <- read.csv(paste(data_dir, "all_contig_annotations.csv", sep="/"))
+# tcr <- tcr[!duplicated(tcr$barcode), ]
+# tcr <- tcr[,c("barcode", "raw_clonotype_id")]
+# names(tcr)[names(tcr) == "raw_clonotype_id"] <- "clonotype_id"
+# tcr <- filter(tcr, barcode %in% Cells(tc.cd8))
+# 
+# clonosize <- tcr %>% group_by(tcr["clonotype_id"]) %>% dplyr::summarise(Frequency = n())
+# clonosize <- clonosize[!clonosize$clonotype_id=="None",]  # Remove NA
+# tcr <- merge(tcr, clonosize, by = "clonotype_id", all = TRUE, sort = FALSE)
+# rownames(tcr) <- tcr[,2]
+# tcr[,2] <- NULL
+# names(tcr)[names(tcr) == "Frequency"] <- "clonosize"
+# # tcr <- tcr[!(tcr$clonotype_id=="None"),]  # Remove all 0 clonotype cells
+# # tcr[is.na(tcr)] <- 0
+# 
+# tc.cd8 <- AddMetaData(object=tc.cd8, metadata=tcr)
+# 
+# rm(tcr, clonosize)
+# 
+# tc.cd8@meta.data[["clonosize"]][is.na(tc.cd8@meta.data[["clonosize"]])] <- 0
+
+```
+
+```{r}
+#Linear Dimensional Reduction
+tc.cd8 <- RunPCA(tc.cd8, features = VariableFeatures(object = tc.cd8))
+print(tc.cd8[["pca"]], dims = 1:5, nfeatures = 5)
+VizDimLoadings(tc.cd8, dims = 1:2, reduction = "pca")
+DimPlot(tc.cd8, reduction = "pca") & NoAxes()
+DimHeatmap(tc.cd8, dims = 1, cells = 500, balanced = TRUE)
+DimHeatmap(tc.cd8, dims = 1:15, cells = 500, balanced = TRUE)
+
+```
+
+
+```{r}
+#Determine dimensionality
+#tc.cd8 <- JackStraw(tc.cd8, num.replicate = 100)
+#tc.cd8 <- ScoreJackStraw(tc.cd8, dims = 1:20)
+#JackStrawPlot(tc.cd8, dims = 1:15)
+ElbowPlot(tc.cd8)
+
+```
+
+```{r}
+# Dimension reduction UMAP
+tc.cd8 <- RunUMAP(tc.cd8, dims = 1:50, umap.method = "umap-learn")
+DimPlot(tc.cd8, reduction = "umap", label=TRUE) & NoAxes()
+
+```
+
+```{r}
+# Maintain global clustering
+# tc.cd8$global_clusters <- factor(subset(tc.cd8, subset = cellTypeGene == "CD8-C4-Pclaf")$cellTypeGene)
+# tc.cd8$global_clusters <- revalue(tc.cd8$global_clusters, c("CD8-C4-Pclaf"="6"))
+
+```
+
+```{r}
+# Cluster cells
+tc.cd8 <- FindNeighbors(tc.cd8, dims = 1:50)
+tc.cd8 <- FindClusters(tc.cd8, resolution = 1.2)
+head(Idents(tc.cd8), 5)
+
+```
+```{r}
+# Change the information of cells containing global-cluster information
+# tc.cd8$seurat_clusters <- factor(tc.cd8$seurat_clusters, levels = c(levels(tc.cd8$seurat_clusters), "6"))
+# tc.cd8$seurat_clusters[Cells(subset(tc.cd8, subset = global_clusters == "6"))] <- tc.cd8$global_clusters[Cells(subset(tc.cd8, subset = global_clusters == "6"))]
+# Idents(tc.cd8) <- tc.cd8$seurat_clusters
+
+```
+
+```{r}
+# Dimension reduction UMAP
+tc.cd8@reductions[["umapRNA"]] <- NULL
+tc.cd8@reductions[["umap"]] <- NULL
+
+tc.cd8 <- RunUMAP(tc.cd8, dims = 1:50, umap.method = "umap-learn", reduction.name = "umap")
+tc.cd8 <- RunUMAP(tc.cd8, dims = 1:50, umap.method = "umap-learn", reduction.name = "umapRNA")
+
+DimPlot(tc.cd8, reduction = "umap", label=TRUE) & NoAxes()
+
+```
+
+```{r}
+# Cell Types
+VlnPlot(tc.cd8, features = c("Cd4"), slot = "counts", log = TRUE, sort = FALSE, pt.size = 0)
+VlnPlot(tc.cd8, features = c("Cd8a"), slot = "counts", log = TRUE, sort = FALSE, pt.size = 0)
+VlnPlot(tc.cd8, features = c("Foxp3"), slot = "counts", log = TRUE, sort = FALSE, pt.size = 0)
+VlnPlot(tc.cd8, features = c("Il2ra"), slot = "counts", log = TRUE, sort = FALSE, pt.size = 0)
+
+```
+
+```{r}
+# find markers for every cluster compared to all remaining cells, report only the positive ones
+tc.cd8.markers <- FindAllMarkers(tc.cd8, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
+tc.cd8.markers %>% group_by(cluster) %>% top_n(n = 2, wt = avg_logFC)
+
+top3 <- tc.cd8.markers %>% group_by(cluster) %>% top_n(n = 3, wt = avg_logFC)
+DoHeatmap(tc.cd8, features = top3$gene) + NoLegend()
+
+top1 <- tc.cd8.markers %>% group_by(cluster) %>% top_n(n = 1, wt = avg_logFC)
+DoHeatmap(tc.cd8, features = top1$gene) + NoLegend()
+
+rm(top1, top3)
+
+```
+
+```{r}
+# Assign cell type to clusters
+new.cluster.ids <- c(0, 1, 2, 3, 4, 5)
+new.cluster.ids <- c("CD8-C1-Ccl4", "CD8-C2-Id3", "CD8-C3-Dusp1", "CD8-C4-Gzmc", "CD8-C5-Gzma", "CD8-C6-Ccr7")
+
+names(new.cluster.ids) <- levels(tc.cd8)
+tc.cd8 <- RenameIdents(tc.cd8, new.cluster.ids)
+
+tc.cd8$cellTypeGene <- Idents(tc.cd8)
+
+Idents(tc.cd8) <- tc.cd8$cellTypeGene
+
+
+new.cluster.ids <- c("CD8-C1-Ccl4", "CD8-C2-Id3", "CD8-C3-Dusp1", "CD8-C4-Gzmc", "CD8-C5-Gzma", "CD8-C6-Ccr7")
+
+names(new.cluster.ids) <- levels(tc.cd8)
+tc.cd8 <- RenameIdents(tc.cd8, new.cluster.ids)
+
+tc.cd8$cd8type <- Idents(tc.cd8)
+
+Idents(tc.cd8) <- tc.cd8$cd8type
+
+tc.cd8$cluster_tumor = as.factor(paste(tc.cd8$cd8type, "_", tc.cd8$tumor))
+
+
+rm(new.cluster.ids) # Cleanup
+
+```
+
+```{r}
+# Cell Types
+VlnPlot(tc.cd8, features = c("Cd4"), slot = "counts", log = TRUE, sort = FALSE, pt.size = 0)
+VlnPlot(tc.cd8, features = c("Cd8a"), slot = "counts", log = TRUE, sort = FALSE, pt.size = 0)
+VlnPlot(tc.cd8, features = c("Foxp3"), slot = "counts", log = TRUE, sort = FALSE, pt.size = 0)
+VlnPlot(tc.cd8, features = c("Il2ra"), slot = "counts", log = TRUE, sort = FALSE, pt.size = 0)
+
+```
+
+```{r}
+# Dimension reduction UMAP
+DimPlot(tc.cd8, reduction = "umap", label=TRUE) & NoAxes()
+
+```
+
+```{r}
+# HTO
+FeaturePlot(tc.cd8, reduction = "umap", features = c("HTO-1-TotalC", "HTO-2-TotalC", "HTO-3-TotalC", "HTO-4-TotalC"))
+
+# IL33
+tumor_list <- ifelse(tc.cd8$HTO_maxID %in% c("HTO-1-TotalC", "HTO-2-TotalC"), "b16", "b16il33")
+names(tumor_list) <- colnames(x = tc.cd8)
+
+tc.cd8 <- AddMetaData(object = tc.cd8, metadata = tumor_list, col.name = "tumor") # Add to .metadata
+
+DimPlot(tc.cd8, reduction = "umap", group.by = "tumor") & NoAxes()
+DimPlot(tc.cd8, reduction = "umap", group.by = "HTO_maxID") & NoAxes()
+
+rm(tumor_list) #  Cleanup
+```
+```{r fig.height=5, fig.width = 12}
+DimPlot(tc.cd8, reduction = "umap", split.by = "tumor") & NoAxes()
+FeaturePlot(tc.cd8, reduction = "umap", features = "clonosize", split.by = "tumor") & NoAxes()
+
+```
+
+# Clonosize Analysis
+
+```{r}
+# Visualize clonosize
+FeaturePlot(tc.cd8, reduction = "umap", features = "clonosize") & NoAxes()
+
+VlnPlot(tc.cd8, features = "clonosize", sort = FALSE, pt.size = 0)
+RidgePlot(tc.cd8, features = "clonosize", sort = FALSE)
+VlnPlot(subset(tc.cd8, subset = tumor == "b16"), features = "clonosize", sort = FALSE, pt.size = 0)
+VlnPlot(subset(tc.cd8, subset = tumor == "b16il33"), features = "clonosize", sort = FALSE, pt.size = 0)
+
+```
+
+```{r}
+save(tc.cd8,file="Data/Cells/CD8/tc.cd8.Robj")
+write.csv(tc.cd8$cd8type, file = "Data/Cells/CD8/cd8.clusters.csv")
+
+```

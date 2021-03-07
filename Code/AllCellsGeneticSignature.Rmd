@@ -1,0 +1,97 @@
+---
+title: "Genetic Signatures"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+---
+
+```{r}
+knitr::opts_chunk$set(fig.path = "Graphs/All/")
+knitr::opts_chunk$set(eval = TRUE)
+knitr::opts_chunk$set(dev = c("pdf", "png"))
+
+```
+
+```{r}
+# Packages
+library(dplyr)
+library(Seurat)
+library(patchwork)
+library(readxl)
+
+#Load Data
+load("Data/Cells/tc.Robj")
+cd4 <- read.csv(file = "Data/Cells/CD4/cd4.clusters.csv")
+cd8 <- read.csv(file = "Data/Cells/CD8/cd8.clusters.csv")
+treg <- read.csv(file = "Data/Cells/Treg/treg.clusters.csv")
+
+anno <- rbind(cd4, cd8, treg)
+sub <- as.character(anno$x)
+names(sub) <- anno$X
+
+tc <- AddMetaData(tc, sub, "subclusters")
+Idents(tc) <- tc$subclusters
+
+```
+
+```{r}
+DimPlot(tc, reduction = "umap", label=TRUE) & NoAxes()
+
+```
+
+```{r}
+# find markers for every cluster compared to all remaining cells, report only the positive ones
+tc.markers <- FindAllMarkers(tc, only.pos = FALSE, min.pct = 0.25, logfc.threshold = 0.5)
+tc.markers <- tc.markers[tc.markers$p_val_adj <= 1e-5,]
+
+tc.markers %>% group_by(cluster) %>% top_n(n = 2, wt = avg_logFC)
+
+top3 <- tc.markers %>% group_by(cluster) %>% top_n(n = 3, wt = avg_logFC)
+DoHeatmap(tc, features = top3$gene) + NoLegend()
+
+top1 <- tc.markers %>% group_by(cluster) %>% top_n(n = 1, wt = avg_logFC)
+DoHeatmap(tc, features = top1$gene) + NoLegend()
+
+rm(top1, top3)
+
+```
+```{r}
+write.csv(tc.markers ,file="Data/Cells/All/genetic_signatures.csv")
+
+```
+
+```{r}
+# find markers for every cluster compared to all remaining cells, report only the positive ones
+tc.markers <- FindAllMarkers(tc, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.5)
+
+tc.markers %>% group_by(cluster) %>% top_n(n = 2, wt = avg_logFC)
+
+top3 <- tc.markers %>% group_by(cluster) %>% top_n(n = 3, wt = avg_logFC)
+DoHeatmap(tc, features = top3$gene) + NoLegend()
+
+top1 <- tc.markers %>% group_by(cluster) %>% top_n(n = 1, wt = avg_logFC)
+DoHeatmap(tc, features = top1$gene) + NoLegend()
+
+rm(top1, top3)
+
+```
+
+```{r}
+
+marker <- data.frame(gene = tc.markers$gene, pval = tc.markers$p_val_adj, logfc = tc.markers$avg_logFC, cluster = tc.markers$cluster)
+cluster.markers <- split(marker, marker$cluster)
+
+```
+
+```{r}
+for (cluster in cluster.markers) {
+  name <- unique(cluster$cluster)
+  cluster$cluster <- NULL
+  write.table(cluster ,file=paste0("Data/Cells/All/cluster_markers/", name,".csv"), row.names=FALSE, col.names=FALSE, sep="\t", quote=FALSE)
+}
+```
+
+
+
+
